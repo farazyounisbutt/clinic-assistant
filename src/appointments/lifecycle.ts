@@ -1,4 +1,5 @@
 import { AppointmentStatus } from './models.js';
+import { DomainError } from '../shared/errors.js';
 
 const transitions: Readonly<
   Record<AppointmentStatus, readonly AppointmentStatus[]>
@@ -21,7 +22,7 @@ export function canTransitionAppointmentStatus(
   from: AppointmentStatus,
   to: AppointmentStatus,
 ): boolean {
-  return transitions[from].includes(to);
+  return Object.hasOwn(transitions, from) && transitions[from].includes(to);
 }
 
 export function assertAppointmentStatusTransition(
@@ -29,7 +30,10 @@ export function assertAppointmentStatusTransition(
   to: AppointmentStatus,
 ): void {
   if (!canTransitionAppointmentStatus(from, to)) {
-    throw new Error(`Invalid appointment status transition: ${from} -> ${to}`);
+    throw new DomainError(
+      'InvalidAppointmentTransition',
+      `Invalid appointment status transition: ${from} -> ${to}`,
+    );
   }
 }
 

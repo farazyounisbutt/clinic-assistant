@@ -15,6 +15,16 @@ const validEdges = new Set([
 ]);
 
 describe('appointment lifecycle', () => {
+  it('rejects malformed stored statuses with a typed transition error', () => {
+    expect(() =>
+      assertAppointmentStatusTransition(
+        'Unknown' as never,
+        AppointmentStatus.CheckedIn,
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: 'InvalidAppointmentTransition' }),
+    );
+  });
   for (const from of Object.values(AppointmentStatus)) {
     for (const to of Object.values(AppointmentStatus)) {
       it(`${from} -> ${to}`, () => {

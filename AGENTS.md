@@ -1,6 +1,7 @@
 # Repository guidance
 
-This is a small TypeScript service foundation for clinic appointments. Keep scope
+This product is a WhatsApp-first clinic appointment and queue management service.
+Keep scope
 limited to the current task; do not introduce a frontend, microservices, a database,
 external credentials, or live integrations without an explicit request.
 
@@ -30,11 +31,10 @@ external credentials, or live integrations without an explicit request.
 ## Data and secrets
 
 - Never commit secrets, tokens, private keys, `.env` files, or real patient data.
+- Keep examples clinic-agnostic: demo_clinic, Demo Doctor, and Specialist. Real
+  clinic identity, specialty, schedule, phone numbers, and customer settings belong
+  in runtime clinic configuration/data, never repository defaults or history.
 - `.env.example` contains only public examples and placeholders.
 - Do not store medical history, diagnosis, prescriptions, CNIC, or clinical records.
 - Appointment reasons are administrative notes only. Avoid patient information in
   logs and test fixtures; use clearly synthetic examples.
-
-Real clinic identity, doctor name, specialty, working hours, WhatsApp number, and
-customer-specific settings belong in runtime clinic configuration/data. Repository
-examples use demo_clinic, Demo Doctor, Specialist, and synthetic contact details.

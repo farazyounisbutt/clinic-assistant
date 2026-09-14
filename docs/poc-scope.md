@@ -2,46 +2,58 @@
 
 WhatsApp-first clinic appointment and queue management service.
 
-Patients will use WhatsApp, clerks will use WhatsApp and Google Sheets, and doctors
-will receive WhatsApp summaries. InLoop operates the middleware. These are planned
-interfaces, not integrations delivered in this foundation.
+Patients will use WhatsApp; clerks will use WhatsApp and Google Sheets; doctors
+will receive WhatsApp summaries/reports. InLoop operates the middleware.
+Those external interfaces are planned, not integrated.
 
-## Foundation delivered
+## Delivered through Task 2
 
-Strict TypeScript models, lifecycle policy, clinic-scoped repository and messaging
-ports, configuration parsing, unit tests, and developer tooling. There is no running
-HTTP service, persistent storage, frontend, booking workflow, queue engine, or report
-generator yet. No WhatsApp, Meta, Google Sheets, production Cloudflare, payment,
-or credential integration is included.
+Strict TypeScript models, validated configuration, storage/messaging/runtime ports,
+availability generation, atomic booking/rescheduling application operations,
+cancellation and explicit lifecycle transitions, and pure checked-in queue ordering.
+Tests include a test-only in-memory coordinator with rollback and overlap protection.
+No production persistence, HTTP service, frontend, report generator, WhatsApp, Meta,
+Google Sheets, Cloudflare deployment, authentication, payments, or AI is included.
 
-## Agreed business rules
+## Confirmed business rules
 
-- Initially one doctor; always carry `clinicId` internally for future clinics.
-- demo defaults: `demo_clinic`, Demo Doctor, Specialist, `Asia/Karachi`, 20-minute
-  appointments, 30-day booking horizon, same-day booking allowed, subscription active.
-- Working hours and breaks remain configurable and unset. Do not infer the doctor's
-  real schedule. Until configured, a future availability service must offer no slots.
-- Availability = working hours minus breaks, blocked slots, and active appointments.
-- Recheck availability immediately before confirmation, inside coordinated writes.
-- Walk-ins use the same appointment records and lifecycle as WhatsApp bookings.
-- A clerk explicitly marks No Show; elapsed appointment time never does so automatically.
-- Rescheduling preserves the original record and creates a linked replacement.
-- Store administrative contact and appointment data only, never clinical records.
+- Neutral demo defaults: demo_clinic, Demo Doctor, Specialist, Asia/Karachi, 20 minutes,
+  30 clinic-local calendar dates (today through day 29), same-day allowed, active subscription.
+- All records and operations use clinicId so clinics remain isolated.
+- Working hours are configurable and unset. Test hours are explicitly synthetic.
+- Availability subtracts breaks, blocked slots, and Scheduled/CheckedIn appointments
+  using half-open interval overlap, and requires full duration within a working period.
+- Starts must lie on a generated slot grid and be strictly in the future. There
+  is no additional lead time or off-grid exception for walk-ins.
+- Recheck authoritative availability within the final atomic write operation.
+- Walk-ins use the same engine and can be checked in by a separate explicit operation.
+- Only explicit clerk action marks NoShow; elapsed time never changes status.
+- Early completion is allowed, with bookedAt <= checkedInAt <= completedAt where
+  check-in exists. Planned start time does not constrain actual completion.
+- Rescheduling retains and links the original and replacement, or changes neither.
+- Patient and appointment records contain administrative data only, never clinical records.
 
 ## Ownership and SaaS direction
 
 The clinic/doctor owns their phone number, patient and appointment records, and
 exported data. InLoop owns and operates the appointment service, scheduling logic,
 WhatsApp automation, queue logic, reporting engine, and subscription/access control.
-The future product supports multiple clinics with monthly subscriptions.
-`subscriptionStatus` is modeled now; billing, payments, subscription enforcement,
-authentication, and authorization are future work.
+The future product supports multiple clinics with monthly subscriptions. Active
+subscription is required for availability/new bookings/rescheduling. Inactive and
+suspended subscriptions still allow managing, reading, and exporting existing
+records. Walk-in reservations are new bookings. No billing exists.
 
-## Decisions needed before Task 2
+## Review before Task 3
 
-Confirm actual working hours and breaks, holiday/blocked-slot editing, booking
-horizon inclusivity, past-time handling for same-day bookings, overnight hours,
-clerk identity and permissions, and queue ordering for walk-ins. Confirm cancellation
-and rescheduling cutoffs, whether terminal-state corrections are needed, and the
-subscription-state vocabulary/access policy. Choose the Sheets write coordination,
-recovery, and clerk-edit strategy before implementing booking confirmation.
+Supply real working periods and breaks through runtime data, and review whether
+future clinics need overnight hours, midnight endpoints, or DST-ambiguous slots.
+
+The slot-grid, early-completion, and inactive-subscription policies are finalized.
+Confirm trusted
+clerk/doctor/patient actor permissions before exposing any input adapter, cancellation
+or rescheduling cutoffs (none currently), and whether terminal-state corrections are needed.
+
+Every future persistence adapter must honor the atomic booking/rescheduling contract.
+The test store demonstrates local behavior only. Distributed atomicity, crash recovery,
+request idempotency, and external delivery semantics must be reviewed before any live
+integration. Do not connect Google Sheets or WhatsApp as part of this milestone.

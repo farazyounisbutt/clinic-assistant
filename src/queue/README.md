@@ -1,5 +1,6 @@
 # Queue boundary
 
-Future queue logic consumes clinic-scoped appointments through ports. Walk-ins use
-the same appointment model and lifecycle. Queue ordering, priority, token issuance,
-and estimated wait times are deliberately not implemented in this foundation.
+`orderCheckedInQueue` is pure and scoped to one clinic/date. It selects CheckedIn
+appointments and orders them by UTC checkedInAt, local appointment start, then ID.
+Walk-ins share this model and lifecycle. Token issuance, priority overrides, estimated
+wait times, UI, and messaging remain outside the current milestone.

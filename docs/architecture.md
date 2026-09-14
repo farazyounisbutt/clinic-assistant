@@ -1,70 +1,109 @@
 # Architecture
 
-One small modular service, owned and operated by InLoop. There are no microservices
-or live external integrations in the foundation.
+One small, runtime-neutral TypeScript service owned and operated by InLoop. Task 2
+implements scheduling, booking, rescheduling, lifecycle changes, and queue ordering.
+There are no live integrations, HTTP endpoints, or production storage adapters.
 
 ```text
-Future WhatsApp/HTTP input -> runtime composition -> application use cases
-                                                   | domain rules
-                                                   | storage/messaging ports
-                                                   v
-                                         future external adapters
+Future input adapter -> AppointmentService -> pure scheduling/lifecycle policies
+                               |
+                    AppointmentWriteCoordinator
+                               |
+                    future persistence adapter
 ```
 
 ## Boundaries
 
-| Module         | Responsibility                                                 |
-| -------------- | -------------------------------------------------------------- |
-| `clinic`       | Clinic settings and subscription state                         |
-| `scheduling`   | Working hours, breaks, blocked-slot types; future availability |
-| `appointments` | Appointment records and pure lifecycle policy                  |
-| `patients`     | Administrative patient contacts                                |
-| `queue`        | Reserved boundary for future queue rules                       |
-| `reports`      | Reserved boundary for future summaries                         |
-| `ports`        | Clinic-scoped storage and channel-neutral messaging contracts  |
-| `adapters`     | Reserved Sheets and WhatsApp integration boundaries            |
-| `config`       | Validated settings from an injected environment map            |
-| `shared`       | Date, time, timestamp, and time-range types                    |
-| `index.ts`     | Public exports and future composition boundary                 |
+| Module         | Responsibility                                              |
+| -------------- | ----------------------------------------------------------- |
+| `clinic`       | Clinic settings and configuration/subscription validation   |
+| `scheduling`   | Calendar/time conversion, interval validation, availability |
+| `appointments` | Records, lifecycle policy, atomic application operations    |
+| `patients`     | Administrative contact model                                |
+| `queue`        | Pure clinic/date-scoped checked-in ordering                 |
+| `reports`      | Reserved for future summaries                               |
+| `ports`        | Storage, messaging, clock, and appointment-ID interfaces    |
+| `adapters`     | Reserved external integration boundaries                    |
+| `config`       | Validated settings from an injected environment map         |
+| `shared`       | Common types and typed domain errors                        |
+| `index.ts`     | Public exports for future composition                       |
 
-Core logic imports no integration SDKs or Node APIs. ESM and NodeNext compilation
-produce Node-compatible JavaScript; keeping the core runtime-neutral prepares it
-for a future Worker entrypoint and bundler. No Worker deployment is configured.
+`AppointmentService` receives an `AppointmentWriteCoordinator`, `Clock`, and
+`AppointmentIdGenerator`. It exposes `availability`, `book`, `reschedule`,
+`transition`, and `listAppointments`. The last operation returns existing records
+for read/export consumers without subscription or booking-horizon restrictions. Displayed availability is never a reservation. `book` is the
+application's create-if-available operation: it returns a committed appointment or
+rejects with a typed error such as `DomainError` with code `SlotConflict`.
 
-TypeScript interfaces describe trusted internal values; they do not validate
-untrusted JSON, webhook payloads, or spreadsheet rows. Future boundary adapters
-must validate identifiers, date/time formats, phone numbers, and record invariants.
-The current runtime validators cover environment configuration and status edges.
+The domain imports no Node APIs, external SDKs, HTTP frameworks, or production
+infrastructure. Core runtime dependencies remain zero. ESM/NodeNext compilation
+supports Node; a future Worker entrypoint can compose the same modules.
 
-## Storage replacement and concurrency
+## Atomic repository contract
 
-Google Sheets is the intended initial POC storage; PostgreSQL is the later option.
-Adapters map native data to domain records and never expose sheet coordinates or
-SQL objects to use cases. Reads include `clinicId`; writes reject cross-clinic data.
+`AppointmentWriteCoordinator.runExclusive(clinicId, operation)` must:
 
-Appointment mutation is exposed only through `AppointmentWriteCoordinator`, which
-serializes operations per clinic across all service instances. A future booking use
-case reads fresh working hours, breaks, blocked slots, and active appointments inside
-that operation, checks availability, writes, and only then confirms the booking.
-All state changes affecting availability must participate in the same coordination.
+1. Serialize operations for a clinic across every writer and service instance.
+2. Provide fresh clinic settings, working hours, blocked intervals, and appointments,
+   plus read-your-writes inside the unit of work. Configuration/schedule changes
+   affecting availability must use equivalent coordination.
+3. Stage inserts/replacements without making partial changes visible externally.
+4. Check the final staged state for overlapping Scheduled/CheckedIn records on the
+   same clinic/date. Reject with `DomainError('SlotConflict')` if any overlap exists.
+5. Commit all writes together, or leave all original state unchanged on any callback
+   or commit failure. Resolve the operation only after successful commit.
 
-The contract requires all-or-nothing writes, including both records in a reschedule.
-Sheets alone cannot provide this contract. Its adapter will need middleware
-coordination plus a recovery strategy, and clerk edits must not bypass it. PostgreSQL
-can implement the port using transactions and suitable concurrency constraints.
-This foundation defines the requirement; it does not claim to implement atomicity.
+The service reads its clock after acquiring the coordinator and loading fresh data.
+It then performs the authoritative availability check and stages the appointment.
+The adapter's final overlap check provides defense against any writer bypassing
+that helper. A reschedule inserts the replacement before staging the original's
+status change; both become visible together. Final-state validation permits a
+replacement to overlap its own original, which becomes nonblocking at commit.
 
-Send messages after successful storage commit. Delivery retries and request
-idempotency must be designed with the integration; they are not implemented here.
-Clinic scoping is a storage contract, not a substitute for future actor authorization.
+All reads/writes are clinic-scoped. Missing clinics/appointments and cross-clinic
+writes must be rejected. Inserts reject duplicate IDs, replacements reject missing
+IDs, and units of work cannot be used after their callback ends. Do not retry
+callbacks implicitly or perform messaging or external side effects inside them.
 
-## Configuration
+Every future persistence adapter, including Google Sheets and PostgreSQL, must honor
+this atomic booking/rescheduling contract. No implementation strategy for those
+adapters is specified or implemented here.
 
-`loadConfig(environment)` accepts a string-valued map. Node callers pass
-`process.env`; Worker callers later pass their environment bindings. The loader
-does not read files or global process state. `.env.example` documents non-secret
-demo values. Working hours are separate records, with no fabricated defaults.
+The reference implementation in `tests/support/in-memory-store.ts` uses isolated
+staging and per-clinic serialization to exercise the contract. It is test-only,
+not durable, and does not coordinate separate store instances or processes.
 
-The configuration currently represents one demo clinic. Future multi-clinic
-composition loads clinic settings through `ClinicRepository` without changing the
-domain. No payment or subscription enforcement logic is included.
+## Validation and errors
+
+Consumers branch on `DomainError.code`, never message text. Codes include
+ClinicNotFound, InvalidClinicConfiguration, SubscriptionInactive,
+DateOutsideBookingHorizon, SameDayBookingDisabled, ClinicClosed, SlotInPast,
+SlotOutsideWorkingHours, SlotOffGrid, SlotOverlapsBreak, SlotBlocked, SlotConflict,
+InvalidAppointmentTransition, AppointmentNotFound, InvalidReschedule, InvalidInput,
+InvalidSchedule, and InvalidLocalTime.
+
+Configuration, dates, times, schedule intervals, and booking contact/source values
+are validated. Internal interfaces still are not arbitrary-JSON schemas. Future
+input/storage adapters must allowlist fields and validate complete records.
+Actor role is trusted internal context for the explicit clerk NoShow rule; no
+identity authentication or general authorization system is implemented.
+
+## Configuration and policy
+
+`loadConfig(environment)` accepts an injected string map, without reading global
+process state or files. Defaults are neutral demo values; working hours remain unset.
+Appointment duration is a positive integer up to 1440 minutes; the horizon is a
+positive integer count of local dates. A duration must also fit a working period.
+Only active subscriptions allow availability queries, booking, and rescheduling.
+Existing appointments can still be cancelled, checked in, completed, or marked
+NoShow when the subscription is inactive or suspended. Reads and exports of existing
+records remain available through `listAppointments` and storage read ports. New
+WalkIn reservations are blocked just like other new bookings. This finalized policy
+is independent of payment-provider logic.
+
+See [availability rules](availability.md) and
+[appointment lifecycle](appointment-lifecycle.md) for exact behavior.
+
+Real clinic identity, doctor name, specialty, working hours, WhatsApp number, and
+customer-specific settings belong in runtime clinic configuration/data. Repository
+examples use demo_clinic, Demo Doctor, Specialist, and synthetic contact details.

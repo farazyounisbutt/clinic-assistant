@@ -36,10 +36,12 @@ export interface AppointmentRepository {
 
 /**
  * A unit of work available only inside a serialized clinic booking operation.
- * Insert rejects duplicate IDs; replace rejects missing IDs or cross-clinic changes.
+ * Reads see staged writes. Insert rejects duplicate IDs; replace rejects missing IDs
+ * or cross-clinic changes. Writes are invisible outside this unit until commit.
+ * The unit must not be retained or used after the callback ends.
  */
 export interface ClinicAppointmentUnitOfWork {
-  readonly clinic: Clinic;
+  readonly clinic: Clinic | null;
   listWorkingHours(): Promise<readonly WorkingHours[]>;
   listBlockedSlots(date: LocalDate): Promise<readonly BlockedSlot[]>;
   listAppointments(date: LocalDate): Promise<readonly Appointment[]>;
@@ -49,10 +51,20 @@ export interface ClinicAppointmentUnitOfWork {
 }
 
 /**
- * Serializes every appointment write per clinic across all service instances.
+ * Atomic booking boundary: serializes every appointment write per clinic across
+ * all service instances and exposes fresh configuration/schedule/appointment data.
  * The callback rechecks availability before insertion. All writes commit together
- * or none do; rescheduling must update the original and insert its replacement
- * together. Adapters must enforce clinic scope and may not weaken this contract.
+ * or none do, including on commit failure. Rescheduling inserts its replacement
+ * and updates the original in the same callback.
+ *
+ * BEFORE publishing a commit, the adapter MUST reject overlapping Scheduled or
+ * CheckedIn records on the same clinic/date with DomainError('SlotConflict').
+ * Validate the final staged state, so a replacement may overlap its original.
+ * Every writer (including schedule/config changes and manual edits) must participate
+ * in equivalent coordination. Reads outside the callback see only committed state.
+ * Resolve only after commit; on error reject without any visible partial changes.
+ * The callback must not be retried implicitly or used for external side effects.
+ * Adapters must enforce clinic scope and may not weaken this contract.
  */
 export interface AppointmentWriteCoordinator {
   runExclusive<T>(

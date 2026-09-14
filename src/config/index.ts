@@ -17,11 +17,19 @@ function integer(
   key: string,
   fallback: string,
   minimum: number,
+  maximum: number = Number.MAX_SAFE_INTEGER,
 ): number {
   const raw = value(env, key, fallback);
   const result = Number(raw);
-  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(result) || result < minimum) {
-    throw new Error(`${key} must be an integer >= ${minimum}`);
+  if (
+    !/^\d+$/.test(raw) ||
+    !Number.isSafeInteger(result) ||
+    result < minimum ||
+    result > maximum
+  ) {
+    throw new Error(
+      `${key} must be an integer between ${minimum} and ${maximum}`,
+    );
   }
   return result;
 }
@@ -57,8 +65,9 @@ export function loadConfig(env: Environment): AppConfig {
         'APPOINTMENT_DURATION_MINUTES',
         '20',
         1,
+        1440,
       ),
-      bookingHorizonDays: integer(env, 'BOOKING_HORIZON_DAYS', '30', 0),
+      bookingHorizonDays: integer(env, 'BOOKING_HORIZON_DAYS', '30', 1),
       sameDayBookingAllowed: sameDay === 'true',
       subscriptionStatus: subscription as SubscriptionStatus,
     },

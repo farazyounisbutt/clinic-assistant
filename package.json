@@ -13,11 +13,13 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run lint && npm test && npm run format:check"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "5.0.0",
     "eslint": "10.10.0",
     "prettier": "3.9.6",
     "typescript": "5.9.3",
