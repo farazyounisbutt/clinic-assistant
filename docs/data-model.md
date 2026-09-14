@@ -30,7 +30,8 @@ Appointment name and number are booking-time snapshots; changes to the patient
 record do not rewrite historical appointments. `createdBy` is an internal actor ID;
 actor authentication and general authorization are not yet implemented. The NoShow
 operation requires trusted Clerk role context. Transition timestamps are recorded,
-but a separate audit log of transition actors is outside this milestone.
+and transition actors/timestamps are persisted in Activity_Log (see
+[SQLite schema](persistence.md) and [projection columns](sheets-schema.md)).
 
 `bookedAt` is required. `checkedInAt`, `completedAt`, and `cancelledAt` are explicitly
 `null` until the corresponding event. `rescheduledFrom` and `rescheduledTo` are

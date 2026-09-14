@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "clinic-assistant",
+  "main": "src/adapters/cloudflare/worker.ts",
+  "compatibility_date": "2026-09-14",
+  "workers_dev": false,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [{ "name": "CLINICS", "class_name": "ClinicDurableObject" }],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ClinicDurableObject"] },
+  ],
+}

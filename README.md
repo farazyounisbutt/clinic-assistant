@@ -5,30 +5,32 @@ WhatsApp-first clinic appointment and queue management service.
 InLoop operates the service. Patients will use WhatsApp, clerks will use WhatsApp
 and Google Sheets, and doctors will receive WhatsApp summaries.
 
-## Current milestone: core scheduling and booking
+## Current milestone: clinic persistence and projection
 
 Strict TypeScript domain models, pure availability calculation, atomic booking and
 rescheduling operations, cancellation/check-in/completion/NoShow transitions, and
 checked-in queue ordering. Storage, messaging, clocks, and ID generation use ports.
-There is no frontend, HTTP server, database, or live integration. An in-memory
-coordinator exists only in tests to exercise concurrency and rollback guarantees.
+A Cloudflare Worker composes one SQLite-backed Durable Object per clinic. Bookings,
+audit events, and a durable projection outbox commit atomically. Google Sheets is
+an operational projection port; no live integration or public operation endpoint is enabled.
+The in-memory coordinator remains a test reference.
 All dependencies are development tools; the production core has no dependencies.
 
 ## Development
 
 Use Node.js 22.13+ (22.x), 24.x, or 26+ and npm. Install reproducibly with `npm ci`.
 
-| Command                 | Purpose                                        |
-| ----------------------- | ---------------------------------------------- |
-| `npm run typecheck`     | Check source and tests with strict TypeScript  |
-| `npm run lint`          | Run ESLint with no warnings allowed            |
-| `npm test`              | Run deterministic unit tests once              |
-| `npm run test:watch`    | Watch tests during development                 |
-| `npm run test:coverage` | Run tests with 80% minimum coverage thresholds |
-| `npm run format`        | Apply Prettier                                 |
-| `npm run format:check`  | Check formatting                               |
-| `npm run check`         | Run type-check, lint, tests, formatting check  |
-| `npm run build`         | Emit ESM JavaScript and declarations into dist |
+| Command                 | Purpose                                                     |
+| ----------------------- | ----------------------------------------------------------- |
+| `npm run typecheck`     | Check source and tests with strict TypeScript               |
+| `npm run lint`          | Run ESLint with no warnings allowed                         |
+| `npm test`              | Run domain and local Cloudflare tests                       |
+| `npm run test:watch`    | Watch tests during development                              |
+| `npm run test:coverage` | Run tests with 80% minimum coverage thresholds              |
+| `npm run format`        | Apply Prettier                                              |
+| `npm run format:check`  | Check formatting                                            |
+| `npm run check`         | Run type-check, lint, tests, formatting check               |
+| `npm run build`         | Emit core ESM and dry-run bundle the Worker (no deployment) |
 
 Neutral demo configuration defaults: `demo_clinic`, `Asia/Karachi`, 20 minutes,
 30 local dates (today through day 29), same-day allowed, subscription active. `.env.example` contains only public
@@ -46,15 +48,15 @@ or real patient data. This system stores administrative records, not clinical re
 ## Architecture and future work
 
 Domain modules (`clinic`, `scheduling`, `appointments`, `patients`) depend on plain
-types and ports. `queue` provides pure ordering; `reports` reserves future work. `adapters`
-will implement storage and messaging boundaries. `config` is runtime-independent;
+types and ports. `queue` provides pure ordering; `reports` reserves future work. `adapters/cloudflare`
+implements persistence and runtime composition. `config` is runtime-independent;
 `index.ts` exports the foundation for future runtime composition.
 
-Google Sheets is the intended first storage adapter and PostgreSQL the future
-replacement. WhatsApp Cloud API and a Cloudflare Worker entrypoint are future work.
-Neither service-specific APIs nor credentials appear in business logic. Every record
-is clinic-scoped. Every future adapter must satisfy the atomic booking/rescheduling
-contract. The test store is not a production persistence implementation.
+SQLite in each clinic Durable Object is the booking authority. Google Sheets is a
+separate operational projection/export; failed delivery leaves bookings reserved and
+queues retry work. WhatsApp remains future work. Service APIs and credentials never
+appear in the core. Internal RPC routes by the clinic ID and rejects mismatched
+object names; HTTP requests return 404 until an authenticated input boundary exists.
 
 `AppointmentService` exposes `availability`, `book`, `reschedule`, `transition`,
 and `listAppointments` for existing-record reads/export consumers.
@@ -73,7 +75,8 @@ timestamps remain ordered. Inactive/suspended subscriptions block new reservatio
 and rescheduling while allowing existing-record management, reads, and exports.
 Read operations never change status.
 
-Read [architecture](docs/architecture.md), [POC scope](docs/poc-scope.md),
+Read [persistence/recovery](docs/persistence.md), [exact Sheets schema](docs/sheets-schema.md),
+[architecture](docs/architecture.md), [POC scope](docs/poc-scope.md),
 [data model](docs/data-model.md), [availability algorithm](docs/availability.md),
 and [appointment lifecycle](docs/appointment-lifecycle.md).
 Contributor instructions are in [AGENTS.md](AGENTS.md).
@@ -85,3 +88,8 @@ Tooling references: [TypeScript NodeNext](https://www.typescriptlang.org/docs/ha
 Real clinic identity, doctor name, specialty, working hours, WhatsApp number, and
 customer-specific settings belong in runtime clinic configuration/data. Repository
 examples use demo_clinic, Demo Doctor, Specialist, and synthetic contact details.
+
+Cloudflare tests run locally with workerd and need loopback access. Vitest 4.1.11
+is pinned to match the official Cloudflare plugin peer range; coverage uses Istanbul
+because V8 coverage is unsupported in that runtime. Wrangler, Workers types, and
+the test plugin are development dependencies; no Google SDK is installed.

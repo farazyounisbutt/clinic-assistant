@@ -1,7 +1,7 @@
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'coverage/**', 'node_modules/**'] },
+  { ignores: ['dist/**', 'coverage/**', 'node_modules/**', '.wrangler/**'] },
   ...tseslint.configs.recommended,
   {
     files: ['src/**/*.ts', 'tests/**/*.ts'],
@@ -22,7 +22,13 @@ export default tseslint.config(
               message: 'Core modules depend on ports, never adapters.',
             },
             {
-              group: ['node:*'],
+              group: [
+                'node:*',
+                'cloudflare:*',
+                '@cloudflare/*',
+                'googleapis',
+                '@googleapis/*',
+              ],
               message: 'Keep core modules portable across Node and Workers.',
             },
           ],

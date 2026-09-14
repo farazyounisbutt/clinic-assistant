@@ -1,15 +1,20 @@
 # Architecture
 
-One small, runtime-neutral TypeScript service owned and operated by InLoop. Task 2
-implements scheduling, booking, rescheduling, lifecycle changes, and queue ordering.
-There are no live integrations, HTTP endpoints, or production storage adapters.
+One small, runtime-neutral TypeScript service owned and operated by InLoop. Task 3 adds
+a Cloudflare Worker and a SQLite-backed Durable Object for each clinic. The domain
+retains scheduling, booking, lifecycle, and queue policy. No live integration is connected;
+the Worker exposes no public operation endpoints.
 
 ```text
 Future input adapter -> AppointmentService -> pure scheduling/lifecycle policies
                                |
                     AppointmentWriteCoordinator
                                |
-                    future persistence adapter
+                    clinic Durable Object / SQLite
+                               |
+                     transactional projection outbox
+                               |
+                     Google Sheets projection port
 ```
 
 ## Boundaries
@@ -23,7 +28,8 @@ Future input adapter -> AppointmentService -> pure scheduling/lifecycle policies
 | `queue`        | Pure clinic/date-scoped checked-in ordering                 |
 | `reports`      | Reserved for future summaries                               |
 | `ports`        | Storage, messaging, clock, and appointment-ID interfaces    |
-| `adapters`     | Reserved external integration boundaries                    |
+| `adapters`     | Cloudflare Worker, clinic Durable Object, SQLite repository |
+| `projection`   | Pure stable Sheets schema and snapshot mapping              |
 | `config`       | Validated settings from an injected environment map         |
 | `shared`       | Common types and typed domain errors                        |
 | `index.ts`     | Public exports for future composition                       |
@@ -37,7 +43,7 @@ rejects with a typed error such as `DomainError` with code `SlotConflict`.
 
 The domain imports no Node APIs, external SDKs, HTTP frameworks, or production
 infrastructure. Core runtime dependencies remain zero. ESM/NodeNext compilation
-supports Node; a future Worker entrypoint can compose the same modules.
+supports Node; the Worker entrypoint composes the same modules behind internal RPC.
 
 ## Atomic repository contract
 
@@ -65,7 +71,11 @@ writes must be rejected. Inserts reject duplicate IDs, replacements reject missi
 IDs, and units of work cannot be used after their callback ends. Do not retry
 callbacks implicitly or perform messaging or external side effects inside them.
 
-Every future persistence adapter, including Google Sheets and PostgreSQL, must honor
+Every clinic Durable Object / SQLite
+|
+transactional projection outbox
+|
+Google Sheets projection port, including Google Sheets and PostgreSQL, must honor
 this atomic booking/rescheduling contract. No implementation strategy for those
 adapters is specified or implemented here.
 
