@@ -1,13 +1,13 @@
-# Future Google Sheets projection adapter
+# Google Sheets projection adapter
 
-Google Sheets is an operational/export projection, never the booking authority.
-Implement `ClinicRecordProjection` from `src/ports/projection.ts` using the exact
-headers and stable keys in `src/projection/sheets.ts`. Upsert the same logical rows
-on retry, remove obsolete managed rows, and ignore stale snapshot revisions.
+`GoogleSheetsProjection` implements `ClinicRecordProjection` using the Google Sheets
+REST API. `GoogleServiceAccountTokens` signs fixed RS256 assertions with Web Crypto,
+caches OAuth tokens, and supplies the HTTP client. No Node SDK is required.
 
-The clinic Durable Object's SQLite transaction enforces booking correctness and
-queues projection work. A Sheets failure leaves the authoritative booking reserved.
-No Google API, account, credentials, or live spreadsheet is connected here.
+The clinic Durable Object owns the target, serializes delivery, and persists retry
+state. Sheets is operational/export output, never booking authority. Bootstrap is
+explicit and refuses nonempty or incompatible targets. No account is connected here.
 
-See `docs/sheets-schema.md` for columns and managed-row protection and
-`docs/persistence.md` for delivery, backoff, and recovery semantics.
+See `docs/google-sheets.md` for setup, internal RPC, failure handling, and limits;
+`docs/sheets-schema.md` defines unchanged v1 columns. No credentials or customer
+spreadsheet IDs belong in this repository.

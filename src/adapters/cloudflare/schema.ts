@@ -43,5 +43,29 @@ export function migrate(storage: DurableObjectStorage, clinicId: string): void {
       attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL,
       last_error TEXT
     )`);
+    // Additive delivery migration, separate from the unchanged domain/schema-v1 records.
+    sql.exec(`CREATE TABLE IF NOT EXISTS projection_delivery (
+      singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL,
+      failed_attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_error_at INTEGER
+    )`);
+    const delivery = sql
+      .exec('SELECT version FROM projection_delivery WHERE singleton=1')
+      .toArray()[0];
+    if (delivery && delivery.version !== 1)
+      throw new Error('Incompatible delivery storage');
+    if (!delivery) {
+      sql.exec('ALTER TABLE projection_outbox ADD COLUMN created_at INTEGER');
+      sql.exec(`UPDATE projection_outbox SET created_at=COALESCE(
+        (SELECT MAX(unixepoch(json_extract(value, '$.cells[4]')) * 1000) FROM json_each(snapshot, '$.sheets.Activity_Log')),
+        next_attempt_at)`);
+      sql.exec(
+        "UPDATE projection_outbox SET last_error=json_object('category','Transient','message','Projection service is temporarily unavailable','automaticRetry',json('true')) WHERE last_error IS NOT NULL",
+      );
+      sql.exec(`INSERT INTO projection_delivery(singleton,version,failed_attempts)
+        SELECT 1,1,COALESCE(SUM(attempts),0) FROM projection_outbox`);
+      sql.exec(
+        `UPDATE projection_delivery SET last_error=(SELECT last_error FROM projection_outbox WHERE last_error IS NOT NULL ORDER BY revision DESC LIMIT 1)`,
+      );
+    }
   });
 }

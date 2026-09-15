@@ -1,9 +1,11 @@
 # Architecture
 
-One small, runtime-neutral TypeScript service owned and operated by InLoop. Task 3 adds
+One small, runtime-neutral TypeScript service owned and operated by InLoop. Task 3 added
 a Cloudflare Worker and a SQLite-backed Durable Object for each clinic. The domain
 retains scheduling, booking, lifecycle, and queue policy. No live integration is connected;
-the Worker exposes no public operation endpoints.
+the Worker exposes no public operation endpoints. Task 4 implements Google service-account
+authentication, explicit target bootstrap/validation, and stable-key REST projection
+delivery. See [Google Sheets delivery](google-sheets.md).
 
 ```text
 Future input adapter -> AppointmentService -> pure scheduling/lifecycle policies

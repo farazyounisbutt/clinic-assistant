@@ -6,15 +6,16 @@ Patients will use WhatsApp; clerks will use WhatsApp and Google Sheets; doctors
 will receive WhatsApp summaries/reports. InLoop operates the middleware.
 Those external interfaces are planned, not integrated.
 
-## Delivered through Task 3
+## Delivered through Task 4
 
 Strict TypeScript models, validated configuration, storage/messaging/runtime ports,
 availability generation, atomic booking/rescheduling application operations,
 cancellation and explicit lifecycle transitions, and pure checked-in queue ordering.
 Tests include a test-only in-memory coordinator with rollback and overlap protection.
 Task 3 adds a Worker entrypoint, clinic-scoped SQLite Durable Objects, operational
-patients, audit, and a durable idempotent projection outbox. Google Sheets has a
-port and schema, with no live adapter. No public HTTP operations, frontend, report
+patients, audit, and a durable idempotent projection outbox. Task 4 implements the Google Sheets REST projection adapter, service-account token
+flow, explicit bootstrap/validation, and classified durable retries with backlog metrics.
+No live Google account is connected. No public HTTP operations, frontend, report
 generator, WhatsApp, Meta, deployment, authentication, payments, or AI are included.
 
 ## Confirmed business rules
@@ -45,7 +46,7 @@ subscription is required for availability/new bookings/rescheduling. Inactive an
 suspended subscriptions still allow managing, reading, and exporting existing
 records. Walk-in reservations are new bookings. No billing exists.
 
-## Review before Task 4
+## Review before a live Google connection
 
 Supply real working periods and breaks through runtime data, and review whether
 future clinics need overnight hours, midnight endpoints, or DST-ambiguous slots.
@@ -59,4 +60,5 @@ The SQLite Durable Object adapter honors the atomic booking/rescheduling contrac
 Google Sheets remains a projection. Local workerd tests cover concurrent reservations,
 SQL rollback, object eviction, and retry. Review [operational concerns](persistence.md)
 before live integration, especially authorization, request idempotency, capacity,
-and the future Google receiver. Task 4 has not begun.
+and single-writer Google delivery. See [Google setup and limitations](google-sheets.md).
+WhatsApp integration has not begun.

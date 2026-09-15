@@ -1,3 +1,4 @@
+import { classifyProjectionFailure } from '../../projection/errors.js';
 import type { Appointment } from '../../appointments/models.js';
 import { isActiveAppointmentStatus } from '../../appointments/lifecycle.js';
 import type {
@@ -360,9 +361,10 @@ export class SqliteClinicRepository
         this.exportRecords(),
       );
       this.storage.sql.exec(
-        'INSERT INTO projection_outbox(revision, snapshot, next_attempt_at) VALUES (?, ?, ?)',
+        'INSERT INTO projection_outbox(revision, snapshot, next_attempt_at, created_at) VALUES (?, ?, ?, ?)',
         revision,
         JSON.stringify(snapshot),
+        now.getTime(),
         now.getTime(),
       );
     });
@@ -375,22 +377,70 @@ export class SqliteClinicRepository
       .one();
   }
   projectionStatus() {
-    const rows = this.storage.sql
-      .exec<{ attempts: number; next_attempt_at: number }>(
-        'SELECT attempts, next_attempt_at FROM projection_outbox ORDER BY revision',
+    const totals = this.storage.sql
+      .exec<{
+        pending: number;
+        failed: number;
+        oldest: number | null;
+        bytes: number;
+      }>(
+        `SELECT COUNT(*) AS pending, COALESCE(SUM(CASE WHEN attempts>0 THEN 1 ELSE 0 END),0) AS failed,
+      MIN(created_at) AS oldest,COALESCE(SUM(length(CAST(snapshot AS BLOB))),0) AS bytes FROM projection_outbox`,
       )
-      .toArray();
+      .one();
+    const head = this.storage.sql
+      .exec<{
+        attempts: number;
+        next_attempt_at: number;
+        last_error: string | null;
+      }>(
+        'SELECT attempts,next_attempt_at,last_error FROM projection_outbox ORDER BY revision LIMIT 1',
+      )
+      .toArray()[0];
+    const delivery = this.storage.sql
+      .exec<{
+        failed_attempts: number;
+        last_error: string | null;
+        last_error_at: number | null;
+      }>(
+        'SELECT failed_attempts,last_error,last_error_at FROM projection_delivery WHERE singleton=1',
+      )
+      .one();
+    const lastFailure = delivery.last_error
+      ? (JSON.parse(delivery.last_error) as {
+          category: string;
+          message: string;
+          automaticRetry: boolean;
+        })
+      : null;
+    const headError = head?.last_error
+      ? (JSON.parse(head.last_error) as { automaticRetry?: boolean })
+      : null;
     return {
-      pending: rows.length,
-      failed: rows.filter((r) => r.attempts > 0).length,
-      nextAttemptAt: rows[0]?.next_attempt_at ?? null,
+      pending: totals.pending,
+      failed: totals.failed,
+      oldestPendingAt: totals.oldest,
+      pendingBytes: totals.bytes,
+      failedAttemptCount: delivery.failed_attempts,
+      headAttemptCount: head?.attempts ?? 0,
+      nextAttemptAt: head?.next_attempt_at ?? null,
+      lastFailure: lastFailure
+        ? { ...lastFailure, at: delivery.last_error_at }
+        : null,
+      blocked: headError?.automaticRetry === false,
       lastDeliveredRevision: this.metadata().delivered_revision,
     };
   }
+  /** Bootstrap/validation must serialize with delivery to the same target. */
+  manageProjection<T>(operation: () => Promise<T>): Promise<T> {
+    return this.locks.projection.run(operation);
+  }
   async flushProjection(projection: ClinicRecordProjection): Promise<void> {
     await this.locks.projection.run(async () => {
-      // Bound each invocation; an alarm continues larger backlogs.
+      // Bound each invocation by count and elapsed time; alarms continue backlogs.
+      const startedAt = this.clock.now().getTime();
       for (let count = 0; count < 25; count++) {
+        if (this.clock.now().getTime() - startedAt >= 20_000) break;
         const job = await this.locks.writes.run(
           async () =>
             this.storage.sql
@@ -405,18 +455,17 @@ export class SqliteClinicRepository
               .toArray()[0],
         );
         if (!job || job.next_attempt_at > this.clock.now().getTime()) break;
-        let delivered = false;
+        let failure: ReturnType<typeof classifyProjectionFailure> | undefined;
         try {
           await projection.applySnapshot(
             JSON.parse(job.snapshot) as ClinicProjectionSnapshot,
           );
-          delivered = true;
-        } catch {
-          /* Store only a safe classification, never remote error payloads. */
+        } catch (error) {
+          failure = classifyProjectionFailure(error);
         }
         await this.locks.writes.run(async () => {
           this.storage.transactionSync(() => {
-            if (delivered) {
+            if (!failure) {
               this.storage.sql.exec(
                 'DELETE FROM projection_outbox WHERE revision=?',
                 job.revision,
@@ -426,19 +475,35 @@ export class SqliteClinicRepository
                 job.revision,
               );
             } else {
-              const delay = Math.min(
-                3_600_000,
-                30_000 * 2 ** Math.min(job.attempts, 7),
+              const delay = failure.automaticRetry
+                ? Math.min(
+                    3_600_000,
+                    Math.max(
+                      30_000 * 2 ** Math.min(job.attempts, 7),
+                      failure.retryAfterMs,
+                    ),
+                  )
+                : 86_400_000;
+              const safe = JSON.stringify({
+                category: failure.category,
+                message: failure.message,
+                automaticRetry: failure.automaticRetry,
+              });
+              this.storage.sql.exec(
+                'UPDATE projection_outbox SET attempts=attempts+1,next_attempt_at=?,last_error=? WHERE revision=?',
+                this.clock.now().getTime() + delay,
+                safe,
+                job.revision,
               );
               this.storage.sql.exec(
-                "UPDATE projection_outbox SET attempts=attempts+1, next_attempt_at=?, last_error='ProjectionUnavailable' WHERE revision=?",
-                this.clock.now().getTime() + delay,
-                job.revision,
+                'UPDATE projection_delivery SET failed_attempts=failed_attempts+1,last_error=?,last_error_at=? WHERE singleton=1',
+                safe,
+                this.clock.now().getTime(),
               );
             }
           });
         });
-        if (!delivered) break;
+        if (failure) break;
       }
       await this.locks.writes.run(async () => {
         const next = this.projectionStatus().nextAttemptAt;

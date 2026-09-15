@@ -1,3 +1,10 @@
+import { GoogleServiceAccountTokens } from '../sheets/auth.js';
+import { GoogleSheetsClient } from '../sheets/client.js';
+import { GoogleSheetsProjection } from '../sheets/projection.js';
+import { configuredTarget } from '../sheets/configuration.js';
+import type { GoogleProjectionEnvironment } from '../sheets/configuration.js';
+import { ProjectionFailure } from '../../projection/errors.js';
+import type { ProjectionFailureCategory } from '../../projection/errors.js';
 import { DurableObject } from 'cloudflare:workers';
 import { AppointmentService } from '../../appointments/service.js';
 import type {
@@ -5,32 +12,28 @@ import type {
   RescheduleAppointment,
   TransitionAppointment,
 } from '../../appointments/service.js';
-import type {
-  ClinicConfiguration,
-  ClinicRecordProjection,
-} from '../../ports/projection.js';
+import type { ClinicConfiguration } from '../../ports/projection.js';
 import { DomainError } from '../../shared/errors.js';
 import type { DomainErrorCode } from '../../shared/errors.js';
 import { SqliteClinicRepository } from './repository.js';
 
-export interface WorkerEnv {
+export interface WorkerEnv extends GoogleProjectionEnvironment {
   CLINICS: DurableObjectNamespace<ClinicDurableObject>;
 }
 export type ClinicResult<T> =
   | { ok: true; value: T }
   | {
       ok: false;
-      error: { code: DomainErrorCode | 'StorageUnavailable'; message: string };
+      error: {
+        code:
+          DomainErrorCode | ProjectionFailureCategory | 'StorageUnavailable';
+        message: string;
+      };
     };
 const clock = { now: () => new Date() };
-const unavailableProjection: ClinicRecordProjection = {
-  applySnapshot: async () => {
-    throw new Error('Projection not configured');
-  },
-};
-
 /** Internal RPC only. No HTTP mutation routes until an authenticated boundary exists. */
 export class ClinicDurableObject extends DurableObject<WorkerEnv> {
+  private google: GoogleSheetsProjection | undefined;
   private repository: SqliteClinicRepository | undefined;
   private repo(clinicId: string): SqliteClinicRepository {
     if (
@@ -58,8 +61,12 @@ export class ClinicDurableObject extends DurableObject<WorkerEnv> {
       return {
         ok: false,
         error:
-          error instanceof DomainError
-            ? { code: error.code, message: error.message }
+          error instanceof DomainError || error instanceof ProjectionFailure
+            ? {
+                code:
+                  error instanceof DomainError ? error.code : error.category,
+                message: error.message,
+              }
             : {
                 code: 'StorageUnavailable',
                 message: 'Clinic operation failed',
@@ -75,8 +82,53 @@ export class ClinicDurableObject extends DurableObject<WorkerEnv> {
       next: () => crypto.randomUUID(),
     });
   }
+  private projection(clinicId: string): GoogleSheetsProjection {
+    if (!this.google) {
+      const target = configuredTarget(this.env, clinicId);
+      if (
+        !this.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ||
+        !this.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
+      )
+        throw new ProjectionFailure('Configuration');
+      const tokens = new GoogleServiceAccountTokens(
+        {
+          email: this.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+          privateKey: this.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+        },
+        clock,
+      );
+      this.google = new GoogleSheetsProjection(
+        target,
+        new GoogleSheetsClient(tokens),
+      );
+    }
+    return this.google;
+  }
+  private drain(repo: SqliteClinicRepository): Promise<void> {
+    // Resolve runtime configuration inside delivery, after booking has committed.
+    return repo.flushProjection({
+      applySnapshot: (snapshot) =>
+        this.projection(repo.clinicId).applySnapshot(snapshot),
+    });
+  }
   private project(repo: SqliteClinicRepository): void {
-    this.ctx.waitUntil(repo.flushProjection(unavailableProjection));
+    this.ctx.waitUntil(this.drain(repo));
+  }
+  validateProjection(clinicId: string) {
+    return this.call(clinicId, (repo) =>
+      repo.manageProjection(() => this.projection(clinicId).validate()),
+    );
+  }
+  bootstrapProjection(clinicId: string) {
+    return this.call(clinicId, (repo) =>
+      repo.manageProjection(() => this.projection(clinicId).bootstrap()),
+    );
+  }
+  drainProjection(clinicId: string) {
+    return this.call(clinicId, async (repo) => {
+      await this.drain(repo);
+      return repo.readProjectionStatus();
+    });
   }
   configure(input: ClinicConfiguration, actorId: string) {
     return this.call(input.clinic.clinicId, async (repo) => {
@@ -127,8 +179,7 @@ export class ClinicDurableObject extends DurableObject<WorkerEnv> {
         'SELECT clinic_id FROM metadata WHERE singleton=1',
       )
       .toArray()[0];
-    if (row)
-      await this.repo(row.clinic_id).flushProjection(unavailableProjection);
+    if (row) await this.drain(this.repo(row.clinic_id));
   }
 }
 export default {

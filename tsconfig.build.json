@@ -8,5 +8,5 @@
     "sourceMap": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["tests", "src/adapters/cloudflare/**"]
+  "exclude": ["tests", "src/adapters/**"]
 }

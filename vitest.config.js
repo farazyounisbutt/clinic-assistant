@@ -2,7 +2,18 @@ import { defineConfig } from 'vitest/config';
 import { cloudflareTest } from '@cloudflare/vitest-plugin';
 
 export default defineConfig({
-  plugins: [cloudflareTest({ wrangler: { configPath: './wrangler.jsonc' } })],
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: './wrangler.jsonc' },
+      miniflare: {
+        bindings: {
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: '',
+          GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: '',
+          GOOGLE_SHEETS_TARGETS: '',
+        },
+      },
+    }),
+  ],
   test: {
     coverage: {
       provider: 'istanbul',

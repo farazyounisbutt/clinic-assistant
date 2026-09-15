@@ -1,6 +1,7 @@
 # Clinic persistence and recovery
 
-Task 3 adds a Cloudflare Worker and SQLite-backed Durable Object adapter. No live
+Task 3 added a Cloudflare Worker and SQLite-backed Durable Object adapter. Task 4
+connects its outbox to the Google REST projection adapter and adds delivery diagnostics. No live
 service is connected. `npm run build` bundles the Worker with `--dry-run` and does
 not deploy. `wrangler.jsonc` declares the `CLINICS` binding and migration `v1` with
 `new_sqlite_classes: ["ClinicDurableObject"]`. Public HTTP requests return 404.
@@ -13,7 +14,9 @@ that `idFromName(clinicId)` equals its own object ID. SQLite metadata additional
 binds a database to its clinic. Separate clinics can reserve identical times.
 
 Internal RPC methods are `configure`, `book`, `reschedule`, `transition`,
-`availability`, `appointments`, `exportRecords`, and `projectionStatus`. Results
+`availability`, `appointments`, `exportRecords`, and `projectionStatus`. Task 4
+adds internal `bootstrapProjection`, `validateProjection`, and `drainProjection`
+operations (see [delivery setup](google-sheets.md)). Results
 are `{ok:true,value}` or `{ok:false,error:{code,message}}`, preserving domain error
 codes across RPC. Unexpected storage failures expose a generic error. Actor IDs
 and roles are trusted internal context; these methods are not an authentication
@@ -85,10 +88,12 @@ by its absence from the next snapshot.
 After commit, the DO uses `waitUntil` to attempt projection through the
 `ClinicRecordProjection` port. A separate mutex serializes projection drains without
 holding the booking mutex while waiting for the external system. Outbox jobs are
-processed in revision order, up to 25 per invocation. Success deletes that job and
+processed in revision order, up to 25 per invocation with an elapsed-time budget. Success deletes that job and
 advances delivered_revision in a transaction. Failure retains the immutable snapshot,
-increments attempts, and stores `ProjectionUnavailable`, never the external error.
-Retries use 30-second exponential backoff capped at one hour. The oldest pending
+increments attempts, and stores a classified safe error, never the external response body.
+Transient retries use 30-second exponential backoff capped at one hour. Task 4
+adds Retry-After support, a delay after uncertain writes, and a 24-hour slow probe
+for permanent/configuration failures. The oldest pending
 job blocks later delivery to preserve order. Pending includes both unattempted and
 failed jobs; failed counts jobs with a recorded failed attempt.
 
@@ -100,14 +105,13 @@ The receiver must converge by stable keys and ignore stale revisions. Sheets may
 be stale or partially projected during an outage; SQLite alone decides availability.
 A Sheets failure never rolls back a successfully reserved appointment.
 
-The composition currently uses an unavailable projection adapter intentionally:
-there are no credentials, Google API calls, or actual sheet writes. Pending work
-and retries are implemented and exercised using test receivers. A future adapter
-must implement the port's idempotent full-snapshot contract, including recovery
-from partial writes; this task does not claim that Google offers atomic multi-sheet
-updates. Acknowledgement means all sheets were applied, not just the appointment row.
+Task 4 composes the real Google REST adapter from runtime service-account secrets
+and a clinic-to-spreadsheet target map. Missing configuration is a safe pending
+failure, not a booking error. See [Google delivery](google-sheets.md) for bootstrap,
+revision-safe batch writes, error categories, timeouts, and partial/uncertain recovery.
+No live credentials or Google account are connected by this repository.
 
-## Limits to review before Task 4
+## Limits before a live connection
 
 - Full snapshots and full-clinic staging are simple but grow with clinic history;
   a prolonged outage multiplies storage usage. Define retention, backlog alerts,
@@ -119,11 +123,9 @@ updates. Acknowledgement means all sheets were applied, not just the appointment
   distinct from projection idempotency and is not yet implemented.
 - Choose backup/restore procedures and test schema upgrades, disaster recovery,
   migration rollouts, and Cloudflare operational limits before a live launch.
-- Future Sheets delivery needs RAW text writes, protected rows, partial-write retry
-  tests, revision fencing, and credential management. Slow receivers also need a
-  bounded timeout/cancellation policy before connecting a real API.
-- Default unavailable delivery keeps retrying while pending. Add operational controls
-  before deployment to avoid indefinite retries without a configured receiver.
+- Task 4 implements literal text writes, stable-key/revision handling, bounded HTTP
+  requests, and slow retries for configuration failures. Set up protected ranges,
+  operational alerts, credential rotation, and live receiver validation before launch.
 
 Tests use the official Cloudflare Vitest plugin and real local workerd SQLite,
 including SQL-trigger fault injection and actual Durable Object eviction. The
@@ -132,3 +134,8 @@ original 201 domain tests are preserved. No mocked database substitutes for SQLi
 References: [SQLite storage transactions](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/),
 [Durable Object tests](https://developers.cloudflare.com/durable-objects/examples/testing-with-durable-objects/),
 [Cloudflare Vitest integration](https://developers.cloudflare.com/workers/testing/vitest-integration/).
+
+Task 4 adds an additive delivery migration: outbox `created_at` plus a
+`projection_delivery` singleton for migration version, cumulative failures, and
+last safe error/time. No domain record or projection column is removed. Existing
+Task 3 outbox snapshots and retry deadlines survive migration.

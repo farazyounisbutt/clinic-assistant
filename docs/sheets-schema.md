@@ -2,7 +2,9 @@
 
 SQLite in the clinic Durable Object is authoritative. Google Sheets is a clinic-facing
 operational/export projection. No spreadsheet, Google account, or credentials are
-created in this milestone. The exact ordered headers are defined by `SHEET_COLUMNS`
+created by this milestone. [Task 4 delivery](google-sheets.md) adds explicit bootstrap
+of an already-created empty target, plus a spreadsheet-level version/clinic/revision
+marker. The v1 columns below are unchanged. The exact ordered headers are defined by `SHEET_COLUMNS`
 in `src/projection/sheets.ts`; the tables below list that same order.
 
 Every sheet starts with these three columns:
@@ -14,7 +16,7 @@ Every sheet starts with these three columns:
 | Clinic_ID  | Opaque runtime clinic ID, e.g. `demo_clinic`.                           |
 
 `ClinicProjectionSnapshot` also carries schemaVersion=1, clinicId, and revision.
-Cells are strings, numbers, booleans, or null. A future adapter renders null as an
+Cells are strings, numbers, booleans, or null. The Google REST adapter renders null as an
 empty cell; booleans remain booleans and numeric settings remain numbers. IDs,
 phone numbers, dates, times, timestamps, JSON, and free text must be written as RAW
 text, never interpreted as formulas or auto-converted numbers. Date/time cells use

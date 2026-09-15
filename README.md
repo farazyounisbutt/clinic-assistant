@@ -5,14 +5,14 @@ WhatsApp-first clinic appointment and queue management service.
 InLoop operates the service. Patients will use WhatsApp, clerks will use WhatsApp
 and Google Sheets, and doctors will receive WhatsApp summaries.
 
-## Current milestone: clinic persistence and projection
+## Current milestone: Google Sheets projection delivery
 
 Strict TypeScript domain models, pure availability calculation, atomic booking and
 rescheduling operations, cancellation/check-in/completion/NoShow transitions, and
 checked-in queue ordering. Storage, messaging, clocks, and ID generation use ports.
 A Cloudflare Worker composes one SQLite-backed Durable Object per clinic. Bookings,
-audit events, and a durable projection outbox commit atomically. Google Sheets is
-an operational projection port; no live integration or public operation endpoint is enabled.
+audit events, and a durable projection outbox commit atomically. The Google Sheets REST adapter uses service-account authentication and stable-ID
+upserts behind a durable retry queue. No live account or public operation endpoint is enabled.
 The in-memory coordinator remains a test reference.
 All dependencies are development tools; the production core has no dependencies.
 
@@ -75,7 +75,8 @@ timestamps remain ordered. Inactive/suspended subscriptions block new reservatio
 and rescheduling while allowing existing-record management, reads, and exports.
 Read operations never change status.
 
-Read [persistence/recovery](docs/persistence.md), [exact Sheets schema](docs/sheets-schema.md),
+Read [Google setup, bootstrap, and delivery](docs/google-sheets.md),
+[persistence/recovery](docs/persistence.md), [exact Sheets schema](docs/sheets-schema.md),
 [architecture](docs/architecture.md), [POC scope](docs/poc-scope.md),
 [data model](docs/data-model.md), [availability algorithm](docs/availability.md),
 and [appointment lifecycle](docs/appointment-lifecycle.md).
@@ -93,3 +94,7 @@ Cloudflare tests run locally with workerd and need loopback access. Vitest 4.1.1
 is pinned to match the official Cloudflare plugin peer range; coverage uses Istanbul
 because V8 coverage is unsupported in that runtime. Wrangler, Workers types, and
 the test plugin are development dependencies; no Google SDK is installed.
+
+Task 4 adds the real Worker-compatible Google adapter without new dependencies.
+See `.env.example` for empty configuration placeholders. Never put service-account
+credentials or clinic spreadsheet IDs in committed files.
