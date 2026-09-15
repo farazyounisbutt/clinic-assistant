@@ -4,9 +4,10 @@ WhatsApp-first clinic appointment and queue management service.
 
 Patients will use WhatsApp; clerks will use WhatsApp and Google Sheets; doctors
 will receive WhatsApp summaries/reports. InLoop operates the middleware.
-Those external interfaces are planned, not integrated.
+Patient WhatsApp and Google projection adapters are implemented; clerk/doctor
+WhatsApp interfaces remain planned.
 
-## Delivered through Task 4
+## Delivered through Task 5
 
 Strict TypeScript models, validated configuration, storage/messaging/runtime ports,
 availability generation, atomic booking/rescheduling application operations,
@@ -15,8 +16,10 @@ Tests include a test-only in-memory coordinator with rollback and overlap protec
 Task 3 adds a Worker entrypoint, clinic-scoped SQLite Durable Objects, operational
 patients, audit, and a durable idempotent projection outbox. Task 4 implements the Google Sheets REST projection adapter, service-account token
 flow, explicit bootstrap/validation, and classified durable retries with backlog metrics.
-No live Google account is connected. No public HTTP operations, frontend, report
-generator, WhatsApp, Meta, deployment, authentication, payments, or AI are included.
+Task 5 adds authenticated Meta webhooks, durable patient sessions/incoming IDs,
+and outbound text/buttons/lists for booking, lookup, cancellation, and rescheduling.
+There is no frontend, report generator, deployment automation, payment logic, or AI.
+Live accounts must be configured separately; tests use fake integration boundaries.
 
 ## Confirmed business rules
 
@@ -53,12 +56,14 @@ future clinics need overnight hours, midnight endpoints, or DST-ambiguous slots.
 
 The slot-grid, early-completion, and inactive-subscription policies are finalized.
 Confirm trusted
-clerk/doctor/patient actor permissions before exposing any input adapter, cancellation
-or rescheduling cutoffs (none currently), and whether terminal-state corrections are needed.
+clerk/doctor actor permissions before adding those input adapters and whether terminal-state
+corrections are needed. Patient management currently requires an owned future Scheduled
+appointment; other internal lifecycle consumers retain their existing rules.
 
 The SQLite Durable Object adapter honors the atomic booking/rescheduling contract;
 Google Sheets remains a projection. Local workerd tests cover concurrent reservations,
 SQL rollback, object eviction, and retry. Review [operational concerns](persistence.md)
 before live integration, especially authorization, request idempotency, capacity,
 and single-writer Google delivery. See [Google setup and limitations](google-sheets.md).
-WhatsApp integration has not begun.
+See [WhatsApp architecture and live-test review](whatsapp.md). No live Meta setup
+or deployment is part of Task 5.

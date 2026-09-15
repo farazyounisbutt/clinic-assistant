@@ -1,14 +1,15 @@
 # Clinic persistence and recovery
 
 Task 3 added a Cloudflare Worker and SQLite-backed Durable Object adapter. Task 4
-connects its outbox to the Google REST projection adapter and adds delivery diagnostics. No live
-service is connected. `npm run build` bundles the Worker with `--dry-run` and does
+connects its outbox to the Google REST projection adapter and adds delivery diagnostics.
+Task 5 adds durable WhatsApp patient input and output. `npm run build` bundles the Worker with `--dry-run` and does
 not deploy. `wrangler.jsonc` declares the `CLINICS` binding and migration `v1` with
-`new_sqlite_classes: ["ClinicDurableObject"]`. Public HTTP requests return 404.
+`new_sqlite_classes: ["ClinicDurableObject"]`. Public HTTP is limited to the authenticated
+[WhatsApp webhook](whatsapp.md); other routes return 404.
 
 ## Coordination
 
-A trusted future input adapter selects `env.CLINICS.getByName(clinicId)`. Never use
+The trusted input boundary selects `env.CLINICS.getByName(clinicId)`. Never use
 random object IDs, appointment IDs, or patient IDs for routing. Each RPC validates
 that `idFromName(clinicId)` equals its own object ID. SQLite metadata additionally
 binds a database to its clinic. Separate clinics can reserve identical times.
@@ -20,7 +21,8 @@ operations (see [delivery setup](google-sheets.md)). Results
 are `{ok:true,value}` or `{ok:false,error:{code,message}}`, preserving domain error
 codes across RPC. Unexpected storage failures expose a generic error. Actor IDs
 and roles are trusted internal context; these methods are not an authentication
-boundary. No public input or live integration is enabled.
+boundary. `receiveWhatsApp` accepts the authenticated Worker handoff; it persists
+inbound work before returning and schedules conversation processing separately.
 
 `SqliteClinicRepository` implements `AppointmentWriteCoordinator` and
 `AppointmentRepository`. A storage-scoped promise mutex serializes configuration
@@ -98,7 +100,8 @@ job blocks later delivery to preserve order. Pending includes both unattempted a
 failed jobs; failed counts jobs with a recorded failed attempt.
 
 The recovery alarm is registered transactionally with new work. Drain completion
-reschedules the alarm for the oldest pending job, or removes it when empty. Alarm
+reschedules the shared alarm for the earliest projection, WhatsApp, or cleanup
+deadline, or removes it when all work is empty. Alarm
 execution failures also receive Cloudflare's runtime retry behavior. If a process
 ends after delivery but before local acknowledgement, the same snapshot is retried.
 The receiver must converge by stable keys and ignore stale revisions. Sheets may
@@ -118,9 +121,10 @@ No live credentials or Google account are connected by this repository.
   capacity limits, and eventually snapshot compaction or incremental delivery.
 - Final overlap verification is quadratic in active records. Establish clinic-size
   limits and measure before optimizing date-scoped validation.
-- Add authenticated actor and clinic authorization, request payload validation and
-  size limits before enabling HTTP or messaging input. API request idempotency is
-  distinct from projection idempotency and is not yet implemented.
+- Task 5 adds authenticated WhatsApp ingress, receiving-phone routing, payload limits,
+  patient ownership checks, and incoming-message idempotency. Future clerk/doctor or
+  other HTTP adapters still need their own authentication, authorization, and request
+  idempotency. Projection idempotency does not protect arbitrary input mutations.
 - Choose backup/restore procedures and test schema upgrades, disaster recovery,
   migration rollouts, and Cloudflare operational limits before a live launch.
 - Task 4 implements literal text writes, stable-key/revision handling, bounded HTTP
@@ -139,3 +143,8 @@ Task 4 adds an additive delivery migration: outbox `created_at` plus a
 `projection_delivery` singleton for migration version, cumulative failures, and
 last safe error/time. No domain record or projection column is removed. Existing
 Task 3 outbox snapshots and retry deadlines survive migration.
+
+Task 5 adds `wa_inbox`, `wa_conversations`, `wa_outbox`, and `wa_status` tables without
+changing existing records or pending projection jobs. The repository infrastructure
+commit hook writes conversation state, incoming receipt, and outbound work in the same
+transaction as any appointment mutation. See [WhatsApp persistence and retention](whatsapp.md).

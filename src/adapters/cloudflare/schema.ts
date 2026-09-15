@@ -43,6 +43,31 @@ export function migrate(storage: DurableObjectStorage, clinicId: string): void {
       attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL,
       last_error TEXT
     )`);
+    sql.exec(`CREATE TABLE IF NOT EXISTS wa_inbox (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+      payload TEXT, phone_id TEXT, received_at INTEGER NOT NULL,
+      next_attempt_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0
+    )`);
+    sql.exec(
+      'CREATE INDEX IF NOT EXISTS wa_inbox_pending ON wa_inbox(sequence) WHERE payload IS NOT NULL',
+    );
+    sql.exec(`CREATE TABLE IF NOT EXISTS wa_conversations (
+      sender TEXT PRIMARY KEY, record TEXT NOT NULL, expires_at INTEGER NOT NULL
+    )`);
+    sql.exec(`CREATE TABLE IF NOT EXISTS wa_outbox (
+      id TEXT PRIMARY KEY, phone_id TEXT NOT NULL, recipient TEXT NOT NULL,
+      payload TEXT, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+      provider_id TEXT, delivery_status TEXT, delivery_at INTEGER, last_error TEXT
+    )`);
+    sql.exec(
+      'CREATE INDEX IF NOT EXISTS wa_provider ON wa_outbox(provider_id)',
+    );
+    sql.exec(`CREATE TABLE IF NOT EXISTS wa_status (
+      id TEXT NOT NULL, phone_id TEXT NOT NULL, recipient TEXT NOT NULL,
+      status TEXT NOT NULL, timestamp INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+      PRIMARY KEY(id,phone_id,recipient)
+    )`);
     // Additive delivery migration, separate from the unchanged domain/schema-v1 records.
     sql.exec(`CREATE TABLE IF NOT EXISTS projection_delivery (
       singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL,

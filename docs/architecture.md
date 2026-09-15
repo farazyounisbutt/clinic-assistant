@@ -2,13 +2,14 @@
 
 One small, runtime-neutral TypeScript service owned and operated by InLoop. Task 3 added
 a Cloudflare Worker and a SQLite-backed Durable Object for each clinic. The domain
-retains scheduling, booking, lifecycle, and queue policy. No live integration is connected;
-the Worker exposes no public operation endpoints. Task 4 implements Google service-account
+retains scheduling, booking, lifecycle, and queue policy. Task 5 adds an authenticated
+WhatsApp webhook and durable patient conversations. Task 4 implements Google service-account
 authentication, explicit target bootstrap/validation, and stable-key REST projection
-delivery. See [Google Sheets delivery](google-sheets.md).
+delivery. See [Google Sheets delivery](google-sheets.md) and
+[WhatsApp patient conversations](whatsapp.md).
 
 ```text
-Future input adapter -> AppointmentService -> pure scheduling/lifecycle policies
+WhatsApp adapter -> AppointmentService -> pure scheduling/lifecycle policies
                                |
                     AppointmentWriteCoordinator
                                |
@@ -73,13 +74,13 @@ writes must be rejected. Inserts reject duplicate IDs, replacements reject missi
 IDs, and units of work cannot be used after their callback ends. Do not retry
 callbacks implicitly or perform messaging or external side effects inside them.
 
-Every clinic Durable Object / SQLite
-|
-transactional projection outbox
-|
-Google Sheets projection port, including Google Sheets and PostgreSQL, must honor
-this atomic booking/rescheduling contract. No implementation strategy for those
-adapters is specified or implemented here.
+Every future authoritative persistence adapter must honor this atomic contract.
+The Sheets projection is not an authoritative booking store.
+
+The SQLite adapter also supports an infrastructure commit hook: WhatsApp conversation
+state, inbound receipt, and outbound reply commit alongside domain changes and the
+projection outbox. This does not change the domain coordinator port or introduce
+external HTTP effects into the unit of work.
 
 The reference implementation in `tests/support/in-memory-store.ts` uses isolated
 staging and per-clinic serialization to exercise the contract. It is test-only,

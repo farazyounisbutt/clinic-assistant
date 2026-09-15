@@ -1,3 +1,4 @@
+import { scheduleClinicAlarm } from './alarms.js';
 import { classifyProjectionFailure } from '../../projection/errors.js';
 import type { Appointment } from '../../appointments/models.js';
 import { isActiveAppointmentStatus } from '../../appointments/lifecycle.js';
@@ -38,7 +39,7 @@ class Mutex {
 }
 const locks = new WeakMap<
   DurableObjectStorage,
-  { writes: Mutex; projection: Mutex }
+  { writes: Mutex; projection: Mutex; messaging: Mutex }
 >();
 type RecordTable =
   | 'clinic_settings'
@@ -62,7 +63,11 @@ export class SqliteClinicRepository
     migrate(storage, clinicId);
     let shared = locks.get(storage);
     if (!shared) {
-      shared = { writes: new Mutex(), projection: new Mutex() };
+      shared = {
+        writes: new Mutex(),
+        projection: new Mutex(),
+        messaging: new Mutex(),
+      };
       locks.set(storage, shared);
     }
     this.locks = shared;
@@ -167,10 +172,24 @@ export class SqliteClinicRepository
   ): Promise<T> {
     return this.execute(clinicId, operation, 'system');
   }
+  /** Infrastructure work shares serialization without changing domain ports. */
+  coordinate<T>(operation: () => Promise<T>): Promise<T> {
+    return this.locks.writes.run(operation);
+  }
+  manageMessaging<T>(operation: () => Promise<T>): Promise<T> {
+    return this.locks.messaging.run(operation);
+  }
+  runWithCommit<T>(
+    operation: (unit: ClinicAppointmentUnitOfWork) => Promise<T>,
+    commit: (result: T) => void,
+  ): Promise<T> {
+    return this.execute(this.clinicId, operation, 'whatsapp-patient', commit);
+  }
   private async execute<T>(
     clinicId: string,
     operation: (unit: ClinicAppointmentUnitOfWork) => Promise<T>,
     actorId: string,
+    onCommit?: (result: T) => void,
   ): Promise<T> {
     this.scope(clinicId);
     return this.locks.writes.run(async () => {
@@ -316,6 +335,15 @@ export class SqliteClinicRepository
               }),
             );
           }
+          onCommit?.(result);
+        });
+      else if (onCommit)
+        await this.storage.transaction(async (transaction) => {
+          const now = this.clock.now().getTime();
+          const alarm = await transaction.getAlarm();
+          if (alarm === null || alarm > now + 1000)
+            await transaction.setAlarm(now + 1000);
+          onCommit(result);
         });
       return result;
     });
@@ -506,12 +534,7 @@ export class SqliteClinicRepository
         if (failure) break;
       }
       await this.locks.writes.run(async () => {
-        const next = this.projectionStatus().nextAttemptAt;
-        if (next === null) await this.storage.deleteAlarm();
-        else
-          await this.storage.setAlarm(
-            Math.max(next, this.clock.now().getTime() + 1000),
-          );
+        await scheduleClinicAlarm(this.storage, this.clock.now().getTime());
       });
     });
   }

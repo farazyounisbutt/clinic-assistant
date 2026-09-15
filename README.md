@@ -5,14 +5,16 @@ WhatsApp-first clinic appointment and queue management service.
 InLoop operates the service. Patients will use WhatsApp, clerks will use WhatsApp
 and Google Sheets, and doctors will receive WhatsApp summaries.
 
-## Current milestone: Google Sheets projection delivery
+## Current milestone: WhatsApp patient conversations
 
 Strict TypeScript domain models, pure availability calculation, atomic booking and
 rescheduling operations, cancellation/check-in/completion/NoShow transitions, and
 checked-in queue ordering. Storage, messaging, clocks, and ID generation use ports.
 A Cloudflare Worker composes one SQLite-backed Durable Object per clinic. Bookings,
 audit events, and a durable projection outbox commit atomically. The Google Sheets REST adapter uses service-account authentication and stable-ID
-upserts behind a durable retry queue. No live account or public operation endpoint is enabled.
+upserts behind a durable retry queue. The authenticated WhatsApp webhook adds patient
+booking, lookup, cancellation, and rescheduling with durable conversation state and
+idempotency. No Meta account setup or deployment is performed.
 The in-memory coordinator remains a test reference.
 All dependencies are development tools; the production core has no dependencies.
 
@@ -54,9 +56,10 @@ implements persistence and runtime composition. `config` is runtime-independent;
 
 SQLite in each clinic Durable Object is the booking authority. Google Sheets is a
 separate operational projection/export; failed delivery leaves bookings reserved and
-queues retry work. WhatsApp remains future work. Service APIs and credentials never
-appear in the core. Internal RPC routes by the clinic ID and rejects mismatched
-object names; HTTP requests return 404 until an authenticated input boundary exists.
+queues retry work. WhatsApp-specific code stays in its adapter. Service APIs and
+credentials never appear in the core. Internal RPC routes by clinic ID and rejects
+mismatched object names. The public `/webhooks/whatsapp` route validates Meta signatures
+and routes receiving phone IDs to clinics before durable enqueue. Other paths return 404.
 
 `AppointmentService` exposes `availability`, `book`, `reschedule`, `transition`,
 and `listAppointments` for existing-record reads/export consumers.
@@ -75,7 +78,8 @@ timestamps remain ordered. Inactive/suspended subscriptions block new reservatio
 and rescheduling while allowing existing-record management, reads, and exports.
 Read operations never change status.
 
-Read [Google setup, bootstrap, and delivery](docs/google-sheets.md),
+Read [WhatsApp architecture and local testing](docs/whatsapp.md),
+[Google setup, bootstrap, and delivery](docs/google-sheets.md),
 [persistence/recovery](docs/persistence.md), [exact Sheets schema](docs/sheets-schema.md),
 [architecture](docs/architecture.md), [POC scope](docs/poc-scope.md),
 [data model](docs/data-model.md), [availability algorithm](docs/availability.md),
@@ -98,3 +102,6 @@ the test plugin are development dependencies; no Google SDK is installed.
 Task 4 adds the real Worker-compatible Google adapter without new dependencies.
 See `.env.example` for empty configuration placeholders. Never put service-account
 credentials or clinic spreadsheet IDs in committed files.
+
+Task 5 adds the direct HTTP Meta client without new dependencies. Patient flows use
+the existing domain policies; clerk and doctor messaging remains future work.

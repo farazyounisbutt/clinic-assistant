@@ -1,6 +1,9 @@
-# Future WhatsApp adapter
+# WhatsApp adapter
 
-No integration is implemented. A future WhatsApp Cloud API adapter will translate
-inbound messages into application commands and implement the messaging port.
-Webhook verification, authorization, idempotency, and delivery retries are future
-integration responsibilities; no external credentials are needed now.
+`webhook.ts` authenticates and parses Meta callbacks. `client.ts` sends text,
+buttons, and lists through the Cloud API. `conversation.ts` implements deterministic
+patient-only flows using the unchanged appointment service. `store.ts` coordinates
+durable inbox/session/outbox state with clinic SQLite transactions.
+
+See [architecture, configuration, and verification](../../../docs/whatsapp.md).
+No Meta credentials or live setup are included.

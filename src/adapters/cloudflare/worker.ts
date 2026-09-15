@@ -1,3 +1,7 @@
+import { webhook } from '../whatsapp/webhook.js';
+import { MetaClient } from '../whatsapp/client.js';
+import { WhatsAppStore } from '../whatsapp/store.js';
+import type { Batch, WhatsAppEnvironment } from '../whatsapp/models.js';
 import { GoogleServiceAccountTokens } from '../sheets/auth.js';
 import { GoogleSheetsClient } from '../sheets/client.js';
 import { GoogleSheetsProjection } from '../sheets/projection.js';
@@ -17,7 +21,8 @@ import { DomainError } from '../../shared/errors.js';
 import type { DomainErrorCode } from '../../shared/errors.js';
 import { SqliteClinicRepository } from './repository.js';
 
-export interface WorkerEnv extends GoogleProjectionEnvironment {
+export interface WorkerEnv
+  extends GoogleProjectionEnvironment, WhatsAppEnvironment {
   CLINICS: DurableObjectNamespace<ClinicDurableObject>;
 }
 export type ClinicResult<T> =
@@ -31,7 +36,7 @@ export type ClinicResult<T> =
       };
     };
 const clock = { now: () => new Date() };
-/** Internal RPC only. No HTTP mutation routes until an authenticated boundary exists. */
+/** Trusted clinic RPC; the public Worker authenticates WhatsApp before handing off. */
 export class ClinicDurableObject extends DurableObject<WorkerEnv> {
   private google: GoogleSheetsProjection | undefined;
   private repository: SqliteClinicRepository | undefined;
@@ -173,17 +178,42 @@ export class ClinicDurableObject extends DurableObject<WorkerEnv> {
   projectionStatus(clinicId: string) {
     return this.call(clinicId, (repo) => repo.readProjectionStatus());
   }
+  receiveWhatsApp(clinicId: string, batch: Batch) {
+    return this.call(clinicId, async (repo) => {
+      const messaging = new WhatsAppStore(this.ctx.storage, repo, clock);
+      await messaging.enqueue(batch);
+      this.ctx.waitUntil(
+        messaging.drain(new MetaClient(this.env)).then(() => this.drain(repo)),
+      );
+    });
+  }
   override async alarm(): Promise<void> {
     const row = this.ctx.storage.sql
       .exec<{ clinic_id: string }>(
         'SELECT clinic_id FROM metadata WHERE singleton=1',
       )
       .toArray()[0];
-    if (row) await this.drain(this.repo(row.clinic_id));
+    if (row) {
+      const repo = this.repo(row.clinic_id);
+      await new WhatsAppStore(this.ctx.storage, repo, clock).drain(
+        new MetaClient(this.env),
+      );
+      await this.drain(repo);
+    }
   }
 }
-export default {
-  fetch(): Response {
-    return new Response('Not found', { status: 404 });
-  },
-} satisfies ExportedHandler<WorkerEnv>;
+function fetchHandler(): Response;
+function fetchHandler(request: Request, env: WorkerEnv): Promise<Response>;
+function fetchHandler(
+  request?: Request,
+  env?: WorkerEnv,
+): Response | Promise<Response> {
+  if (!request || !env) return new Response('Not found', { status: 404 });
+  return webhook(request, env, async (clinicId, batch) => {
+    const result = await env.CLINICS.get(
+      env.CLINICS.idFromName(clinicId),
+    ).receiveWhatsApp(clinicId, batch);
+    if (!result.ok) throw new Error('Enqueue unavailable');
+  });
+}
+export default { fetch: fetchHandler } satisfies ExportedHandler<WorkerEnv>;

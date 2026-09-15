@@ -18,5 +18,10 @@
     "noEmit": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["src/adapters/**", "tests/persistence/**", "tests/sheets/**"]
+  "exclude": [
+    "src/adapters/**",
+    "tests/persistence/**",
+    "tests/sheets/**",
+    "tests/whatsapp/**"
+  ]
 }
