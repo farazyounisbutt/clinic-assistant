@@ -17,7 +17,7 @@ export async function googleJson(
     const response = await request(url, {
       ...init,
       signal: controller.signal,
-      redirect: 'error',
+      redirect: 'manual',
     });
     if (!response.ok) {
       const status = response.status;
