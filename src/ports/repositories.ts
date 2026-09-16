@@ -46,6 +46,8 @@ export interface ClinicAppointmentUnitOfWork {
   listBlockedSlots(date: LocalDate): Promise<readonly BlockedSlot[]>;
   listAppointments(date: LocalDate): Promise<readonly Appointment[]>;
   findAppointment(appointmentId: string): Promise<Appointment | null>;
+  /** Optional operational capability; participates in the same atomic commit. */
+  insertBlockedSlot?(block: BlockedSlot): Promise<void>;
   insert(appointment: Appointment): Promise<void>;
   replace(appointment: Appointment): Promise<void>;
 }

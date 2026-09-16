@@ -11,6 +11,7 @@ export default defineConfig({
           GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: '',
           GOOGLE_SHEETS_TARGETS: '',
           META_ACCESS_TOKEN: '',
+          WHATSAPP_OPERATORS: '',
           META_APP_SECRET: '',
           WHATSAPP_VERIFY_TOKEN: '',
           WHATSAPP_PHONE_CLINICS: '',

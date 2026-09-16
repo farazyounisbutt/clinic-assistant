@@ -1,5 +1,6 @@
 import { webhook } from '../whatsapp/webhook.js';
 import { MetaClient } from '../whatsapp/client.js';
+import { configuredOperators } from '../whatsapp/operators.js';
 import { WhatsAppStore } from '../whatsapp/store.js';
 import type { Batch, WhatsAppEnvironment } from '../whatsapp/models.js';
 import { GoogleServiceAccountTokens } from '../sheets/auth.js';
@@ -180,7 +181,12 @@ export class ClinicDurableObject extends DurableObject<WorkerEnv> {
   }
   receiveWhatsApp(clinicId: string, batch: Batch) {
     return this.call(clinicId, async (repo) => {
-      const messaging = new WhatsAppStore(this.ctx.storage, repo, clock);
+      const messaging = new WhatsAppStore(
+        this.ctx.storage,
+        repo,
+        clock,
+        configuredOperators(this.env.WHATSAPP_OPERATORS),
+      );
       await messaging.enqueue(batch);
       this.ctx.waitUntil(
         messaging.drain(new MetaClient(this.env)).then(() => this.drain(repo)),
@@ -195,9 +201,12 @@ export class ClinicDurableObject extends DurableObject<WorkerEnv> {
       .toArray()[0];
     if (row) {
       const repo = this.repo(row.clinic_id);
-      await new WhatsAppStore(this.ctx.storage, repo, clock).drain(
-        new MetaClient(this.env),
-      );
+      await new WhatsAppStore(
+        this.ctx.storage,
+        repo,
+        clock,
+        configuredOperators(this.env.WHATSAPP_OPERATORS),
+      ).drain(new MetaClient(this.env));
       await this.drain(repo);
     }
   }

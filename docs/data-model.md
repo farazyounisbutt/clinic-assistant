@@ -24,11 +24,11 @@ See [availability](availability.md) for time conversion and DST limitations.
 end times. An inactive working-hours record contributes no availability. Real hours
 are not seeded. A blocked-slot reason is an administrative label.
 
-Booking requires an E.164-shaped contact number; future input adapters must normalize
+Booking requires an E.164-shaped contact number, except a contactless WalkIn may use an empty string; future input adapters must normalize
 numbers and verify any additional contact requirements before calling the service.
 Appointment name and number are booking-time snapshots; changes to the patient
 record do not rewrite historical appointments. `createdBy` is an internal actor ID;
-actor authentication and general authorization are not yet implemented. The NoShow
+the WhatsApp clerk boundary resolves that ID through clinic-scoped runtime operator authorization. The NoShow
 operation requires trusted Clerk role context. Transition timestamps are recorded,
 and transition actors/timestamps are persisted in Activity_Log (see
 [SQLite schema](persistence.md) and [projection columns](sheets-schema.md)).

@@ -32,7 +32,7 @@ remain unbookable regardless of status. No status changes occur during availabil
 queries or because the clock advances.
 
 Actor identity/role is supplied by a trusted internal caller; future boundaries must
-authenticate that context. No authentication or general permissions engine exists yet.
+authenticate that context. The WhatsApp boundary now resolves clinic-scoped Clerk identities through the operator directory; internal RPC callers remain trusted.
 
 ## Rescheduling
 

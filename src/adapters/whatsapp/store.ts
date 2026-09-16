@@ -3,6 +3,10 @@ import type { SqliteClinicRepository } from '../cloudflare/repository.js';
 import { scheduleClinicAlarm } from '../cloudflare/alarms.js';
 import { converse } from './conversation.js';
 import type { Conversation, Outcome } from './conversation.js';
+import { converseClerk } from './clerk.js';
+import type { ClerkConversation, ClerkOutcome } from './clerk.js';
+import { noOperators } from '../../ports/operators.js';
+import type { OperatorDirectory } from '../../ports/operators.js';
 import { MetaFailure } from './models.js';
 import type { Batch, Incoming, Message, Messenger } from './models.js';
 
@@ -31,6 +35,7 @@ export class WhatsAppStore {
     private readonly storage: DurableObjectStorage,
     private readonly repo: SqliteClinicRepository,
     private readonly clock: Clock,
+    private readonly operators: OperatorDirectory = noOperators,
   ) {}
   /** The caller authenticated and validated the entire envelope before any write. */
   async enqueue(batch: Batch): Promise<void> {
@@ -112,6 +117,7 @@ export class WhatsAppStore {
   }
   private async processOne(): Promise<boolean> {
     let job: InboxRow | undefined;
+    let actorId = 'whatsapp-patient';
     try {
       return await this.repo
         .runWithCommit(
@@ -132,19 +138,40 @@ export class WhatsAppStore {
               .toArray()[0];
             if (incoming.timestamp <= this.clock.now().getTime() - WINDOW_MS)
               return { job, outcome: null };
-            const outcome = await converse(
-              row ? (JSON.parse(row.record) as Conversation) : null,
-              incoming,
-              this.repo.exportRecords(),
-              unit,
-              this.clock,
+            const prior = row
+              ? (JSON.parse(row.record) as Conversation | ClerkConversation)
+              : null;
+            const operator = this.operators.resolve(
+              this.repo.clinicId,
+              incoming.sender,
             );
+            const isClerk = prior && 'kind' in prior && prior.kind === 'clerk';
+            const records = this.repo.exportRecords();
+            const outcome =
+              operator?.role === 'Clerk'
+                ? await converseClerk(
+                    isClerk ? (prior as ClerkConversation) : null,
+                    incoming,
+                    records,
+                    unit,
+                    this.clock,
+                    operator,
+                  )
+                : await converse(
+                    isClerk ? null : (prior as Conversation | null),
+                    incoming,
+                    records,
+                    unit,
+                    this.clock,
+                  );
+            if (operator?.role === 'Clerk') actorId = operator.operatorId;
             return { job, outcome };
           },
           (result) => {
             if (!result) return;
             this.complete(result.job, result.outcome);
           },
+          () => actorId,
         )
         .then((result) => result !== null);
     } catch {
@@ -161,7 +188,10 @@ export class WhatsAppStore {
       return false;
     }
   }
-  private complete(job: InboxRow, outcome: Outcome | null): void {
+  private complete(
+    job: InboxRow,
+    outcome: Outcome | ClerkOutcome | null,
+  ): void {
     if (outcome) {
       const state = outcome.state;
       this.storage.sql.exec(
@@ -175,7 +205,12 @@ export class WhatsAppStore {
         job.id,
         job.phone_id,
         state.sender,
-        JSON.stringify(outcome.message),
+        JSON.stringify({
+          ...outcome.message,
+          ...('kind' in state && state.kind === 'clerk'
+            ? { operatorId: state.operatorId }
+            : {}),
+        }),
         this.clock.now().getTime(),
         this.clock.now().getTime(),
         Math.min(
@@ -234,10 +269,24 @@ export class WhatsAppStore {
           failure = new MetaFailure('Rejected');
         else
           try {
+            const payload = JSON.parse(job.payload) as Message & {
+              operatorId?: string;
+            };
+            if (payload.operatorId) {
+              const operator = this.operators.resolve(
+                this.repo.clinicId,
+                job.recipient,
+              );
+              if (
+                operator?.role !== 'Clerk' ||
+                operator.operatorId !== payload.operatorId
+              )
+                throw new MetaFailure('Configuration');
+            }
             provider = await messenger.send(
               job.phone_id,
               job.recipient,
-              JSON.parse(job.payload) as Message,
+              payload,
             );
           } catch (error) {
             failure =

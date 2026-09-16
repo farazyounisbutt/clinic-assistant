@@ -64,7 +64,8 @@ function validateBooking(input: BookAppointment): void {
     input.createdBy,
   );
   if (
-    !/^\+[1-9]\d{7,14}$/.test(input.whatsappNumber) ||
+    (!(input.source === 'WalkIn' && input.whatsappNumber === '') &&
+      !/^\+[1-9]\d{7,14}$/.test(input.whatsappNumber)) ||
     !Object.values(AppointmentSource).includes(input.source) ||
     (input.reason !== undefined && typeof input.reason !== 'string')
   ) {

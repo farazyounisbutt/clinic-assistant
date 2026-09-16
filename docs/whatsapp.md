@@ -210,3 +210,7 @@ Protocol references: [Meta webhook setup](https://developers.facebook.com/docs/g
 and [Graph API version history](https://developers.facebook.com/docs/graph-api/changelog/versions/).
 The example SDK documentation is archived; this implementation uses direct HTTP,
 not the archived SDK. Verify current Meta requirements again before live setup.
+
+## Authorized clerk operations
+
+The runtime `WHATSAPP_OPERATORS` directory enables the separate [clerk state machine](clerk-whatsapp.md). Patient commands never assign a staff role. Doctor reports are not implemented.

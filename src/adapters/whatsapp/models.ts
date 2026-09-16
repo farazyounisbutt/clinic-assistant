@@ -1,4 +1,5 @@
 export interface WhatsAppEnvironment {
+  readonly WHATSAPP_OPERATORS?: string;
   readonly META_ACCESS_TOKEN?: string;
   readonly META_APP_SECRET?: string;
   readonly WHATSAPP_VERIFY_TOKEN?: string;

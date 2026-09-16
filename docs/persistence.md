@@ -148,3 +148,7 @@ Task 5 adds `wa_inbox`, `wa_conversations`, `wa_outbox`, and `wa_status` tables 
 changing existing records or pending projection jobs. The repository infrastructure
 commit hook writes conversation state, incoming receipt, and outbound work in the same
 transaction as any appointment mutation. See [WhatsApp persistence and retention](whatsapp.md).
+
+## Clerk transactions
+
+The optional `insertBlockedSlot` unit-of-work capability stages Block Time with appointment writes. A `TimeBlocked` activity, revision, projection, conversation state and reply commit atomically; block insertion never directly writes Sheets. Clerk messages use their configured internal operator ID for audit records. See [clerk operations](clerk-whatsapp.md).

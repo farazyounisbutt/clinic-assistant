@@ -18,6 +18,7 @@ import type { Clock } from '../../ports/runtime.js';
 import { projectionSnapshot } from '../../projection/sheets.js';
 import { intervalsOverlap } from '../../scheduling/availability.js';
 import { DomainError } from '../../shared/errors.js';
+import type { BlockedSlot } from '../../scheduling/models.js';
 import { migrate } from './schema.js';
 import { cleanConfiguration } from './configuration.js';
 
@@ -182,13 +183,14 @@ export class SqliteClinicRepository
   runWithCommit<T>(
     operation: (unit: ClinicAppointmentUnitOfWork) => Promise<T>,
     commit: (result: T) => void,
+    actor: () => string = () => 'whatsapp-patient',
   ): Promise<T> {
-    return this.execute(this.clinicId, operation, 'whatsapp-patient', commit);
+    return this.execute(this.clinicId, operation, actor, commit);
   }
   private async execute<T>(
     clinicId: string,
     operation: (unit: ClinicAppointmentUnitOfWork) => Promise<T>,
-    actorId: string,
+    actorId: string | (() => string),
     onCommit?: (result: T) => void,
   ): Promise<T> {
     this.scope(clinicId);
@@ -198,6 +200,7 @@ export class SqliteClinicRepository
         snapshot.appointments.map((a) => [a.appointmentId, a]),
       );
       const staged = new Map(original);
+      const newBlocks: BlockedSlot[] = [];
       let open = true;
       const guard = () => {
         if (!open) throw new DomainError('InvalidInput', 'Closed unit of work');
@@ -253,7 +256,7 @@ export class SqliteClinicRepository
         },
         listBlockedSlots: async (date) => {
           guard();
-          return snapshot.blockedSlots
+          return [...snapshot.blockedSlots, ...newBlocks]
             .filter((b) => b.date === date)
             .map((b) => ({ ...b }));
         },
@@ -267,6 +270,25 @@ export class SqliteClinicRepository
           guard();
           const a = staged.get(id);
           return a ? copy(a) : null;
+        },
+        insertBlockedSlot: async (block) => {
+          guard();
+          this.scope(block.clinicId);
+          if (
+            [...snapshot.blockedSlots, ...newBlocks].some(
+              (b) => b.id === block.id,
+            )
+          )
+            throw new DomainError('InvalidInput');
+          const clean = cleanConfiguration(
+            {
+              clinic: snapshot.clinic!,
+              workingHours: snapshot.workingHours,
+              blockedSlots: [block],
+            },
+            clinicId,
+          ).blockedSlots[0]!;
+          newBlocks.push(clean);
         },
         insert: async (a) => {
           guard();
@@ -304,39 +326,54 @@ export class SqliteClinicRepository
         (a) =>
           JSON.stringify(a) !== JSON.stringify(original.get(a.appointmentId)),
       );
-      if (changed.length)
-        await this.commit(actorId, (event) => {
-          for (const a of changed) {
-            const before = original.get(a.appointmentId);
-            this.put('appointments', a.appointmentId, a);
-            if (!before && !a.rescheduledFrom) {
-              const patient = snapshot.patients.find(
-                (p) => p.patientId === a.patientId,
-              );
-              this.put('patients', a.patientId, {
-                clinicId,
-                patientId: a.patientId,
-                name: a.patientName,
-                whatsappNumber: a.whatsappNumber,
-                createdAt: patient?.createdAt ?? a.bookedAt,
-              });
+      for (const block of newBlocks)
+        if (
+          active.some(
+            (a) =>
+              a.appointmentDate === block.date && intervalsOverlap(a, block),
+          )
+        )
+          throw new DomainError('SlotConflict');
+      if (changed.length || newBlocks.length)
+        await this.commit(
+          typeof actorId === 'function' ? actorId() : actorId,
+          (event) => {
+            for (const block of newBlocks) {
+              this.put('blocked_slots', block.id, block);
+              event('TimeBlocked', null, JSON.stringify({ blockId: block.id }));
             }
-            const action = !before
-              ? 'AppointmentCreated'
-              : `Appointment${a.status}`;
-            event(
-              action,
-              a.appointmentId,
-              JSON.stringify({
-                from: before?.status ?? null,
-                to: a.status,
-                rescheduledFrom: a.rescheduledFrom,
-                rescheduledTo: a.rescheduledTo,
-              }),
-            );
-          }
-          onCommit?.(result);
-        });
+            for (const a of changed) {
+              const before = original.get(a.appointmentId);
+              this.put('appointments', a.appointmentId, a);
+              if (!before && !a.rescheduledFrom) {
+                const patient = snapshot.patients.find(
+                  (p) => p.patientId === a.patientId,
+                );
+                this.put('patients', a.patientId, {
+                  clinicId,
+                  patientId: a.patientId,
+                  name: a.patientName,
+                  whatsappNumber: a.whatsappNumber,
+                  createdAt: patient?.createdAt ?? a.bookedAt,
+                });
+              }
+              const action = !before
+                ? 'AppointmentCreated'
+                : `Appointment${a.status}`;
+              event(
+                action,
+                a.appointmentId,
+                JSON.stringify({
+                  from: before?.status ?? null,
+                  to: a.status,
+                  rescheduledFrom: a.rescheduledFrom,
+                  rescheduledTo: a.rescheduledTo,
+                }),
+              );
+            }
+            onCommit?.(result);
+          },
+        );
       else if (onCommit)
         await this.storage.transaction(async (transaction) => {
           const now = this.clock.now().getTime();
