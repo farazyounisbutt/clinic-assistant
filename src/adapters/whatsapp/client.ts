@@ -13,7 +13,7 @@ export class MetaClient implements Messenger {
     recipient: string,
     message: Message,
   ): Promise<string> {
-    const version = this.env.WHATSAPP_GRAPH_VERSION || 'v25.0';
+    const version = this.env.WHATSAPP_GRAPH_VERSION || 'v26.0';
     if (
       !this.env.META_ACCESS_TOKEN ||
       !/^v\d+\.0$/.test(version) ||

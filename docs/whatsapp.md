@@ -45,9 +45,9 @@ Set these only through ignored local `.dev.vars` or Cloudflare secrets/configura
 | `META_APP_SECRET`        | App secret for POST signature verification                     |
 | `WHATSAPP_VERIFY_TOKEN`  | Independently chosen webhook verification token                |
 | `WHATSAPP_PHONE_CLINICS` | JSON mapping `"<WHATSAPP_PHONE_NUMBER_ID>"` to `"demo_clinic"` |
-| `WHATSAPP_GRAPH_VERSION` | Graph API version; application default `v25.0`                 |
+| `WHATSAPP_GRAPH_VERSION` | Graph API version; application default `v26.0`                 |
 
-`v25.0` is the version targeted by the transport fixtures, not an assertion that
+`v26.0` is the version targeted by the transport fixtures, not an assertion that
 it is the latest version. Check Meta's current version support before live testing
 or changing the override. Invalid version syntax fails closed. WABA ID is needed
 for eventual app subscription/setup, but not for this adapter's runtime routing or

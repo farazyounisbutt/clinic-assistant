@@ -553,3 +553,26 @@ describe('outbound validation and timeout', () => {
     expect(http).not.toHaveBeenCalled();
   });
 });
+
+it('defaults to Graph v26.0 while preserving an explicit version override', async () => {
+  const http = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async () =>
+      Response.json({ messages: [{ id: 'wamid.synthetic' }] }),
+    );
+  await new MetaClient({ META_ACCESS_TOKEN: 'synthetic-token' }, http).send(
+    phone,
+    sender,
+    { type: 'text', body: 'Test' },
+  );
+  expect(http.mock.calls[0]![0]).toBe(
+    `https://graph.facebook.com/v26.0/${phone}/messages`,
+  );
+  await new MetaClient(
+    { META_ACCESS_TOKEN: 'synthetic-token', WHATSAPP_GRAPH_VERSION: 'v25.0' },
+    http,
+  ).send(phone, sender, { type: 'text', body: 'Test' });
+  expect(http.mock.calls[1]![0]).toBe(
+    `https://graph.facebook.com/v25.0/${phone}/messages`,
+  );
+});

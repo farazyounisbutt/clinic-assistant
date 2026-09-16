@@ -14,7 +14,7 @@ export default defineConfig({
           META_APP_SECRET: '',
           WHATSAPP_VERIFY_TOKEN: '',
           WHATSAPP_PHONE_CLINICS: '',
-          WHATSAPP_GRAPH_VERSION: 'v25.0',
+          WHATSAPP_GRAPH_VERSION: 'v26.0',
         },
       },
     }),

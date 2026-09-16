@@ -8,6 +8,20 @@
   "durable_objects": {
     "bindings": [{ "name": "CLINICS", "class_name": "ClinicDurableObject" }],
   },
+  "env": {
+    "development": {
+      "name": "clinic-assistant-development",
+      "main": "src/adapters/cloudflare/development.ts",
+      "workers_dev": true,
+      "preview_urls": false,
+      "vars": { "WHATSAPP_GRAPH_VERSION": "v26.0", "DEVELOPMENT_MODE": "true" },
+      "durable_objects": {
+        "bindings": [
+          { "name": "CLINICS", "class_name": "ClinicDurableObject" },
+        ],
+      },
+    },
+  },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ClinicDurableObject"] },
   ],
