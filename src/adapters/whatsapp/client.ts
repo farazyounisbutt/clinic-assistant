@@ -64,7 +64,9 @@ export class MetaClient implements Messenger {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.http(
+      // Worker fetch rejects a class instance as its receiver.
+      const request = this.http;
+      const response = await request(
         `https://graph.facebook.com/${version}/${phoneNumberId}/messages`,
         {
           method: 'POST',
