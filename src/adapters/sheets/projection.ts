@@ -168,7 +168,11 @@ function validatePayload(
         !row.key ||
         seen.has(row.key) ||
         !Array.isArray(row.cells) ||
-        row.cells.length !== SHEET_COLUMNS[name].length ||
+        (row.cells.length !== SHEET_COLUMNS[name].length &&
+          !(
+            name === 'Clinic_Settings' &&
+            row.cells.length === SHEET_COLUMNS[name].length - 1
+          )) ||
         !row.cells.every(cell) ||
         row.cells[0] !== row.key ||
         row.cells[1] !== snapshot.revision ||
@@ -193,7 +197,11 @@ export class GoogleSheetsProjection implements ClinicRecordProjection {
     const state = marker(document, this.target.clinicId);
     const sheets = names.map((name) => {
       const sheet = document.sheets.find((s) => s.name === name);
-      if (!sheet || sheet.columnCount < SHEET_COLUMNS[name].length)
+      if (
+        !sheet ||
+        sheet.columnCount <
+          SHEET_COLUMNS[name].length - (name === 'Clinic_Settings' ? 1 : 0)
+      )
         throw new ProjectionFailure('Schema');
       return sheet;
     });
@@ -202,11 +210,22 @@ export class GoogleSheetsProjection implements ClinicRecordProjection {
       names.length,
     );
     let maximumRevision = state.revision;
+    let legacySettings = false;
     const indices = values.map((rows, index) => {
       const name = names[index]!;
       const width = SHEET_COLUMNS[name].length;
-      if (JSON.stringify(rows[0]) !== JSON.stringify(SHEET_COLUMNS[name]))
+      const legacy =
+        name === 'Clinic_Settings' &&
+        JSON.stringify(rows[0]) ===
+          JSON.stringify(SHEET_COLUMNS.Clinic_Settings.slice(0, -1));
+      if (
+        JSON.stringify(rows[0]) !== JSON.stringify(SHEET_COLUMNS[name]) &&
+        !legacy
+      )
         throw new ProjectionFailure('Schema');
+      if (!legacy && sheets[index]!.columnCount < width)
+        throw new ProjectionFailure('Schema');
+      if (legacy) legacySettings = true;
       const keys = new Map<string, { index: number; revision: number }>();
       rows.slice(1).forEach((row, index) => {
         if (row.every((c) => c === null || c === '')) return;
@@ -216,7 +235,7 @@ export class GoogleSheetsProjection implements ClinicRecordProjection {
           !key ||
           !integer(revision) ||
           clinicId !== this.target.clinicId ||
-          row.length > width ||
+          row.length > (legacy ? width - 1 : width) ||
           keys.has(key) ||
           !validKey(name, key, row, clinicId)
         )
@@ -229,7 +248,7 @@ export class GoogleSheetsProjection implements ClinicRecordProjection {
     // All writes include the marker in one atomic batch. A row beyond that marker
     // signals external modification or incompatible delivery; never acknowledge it.
     if (maximumRevision > state.revision) throw new ProjectionFailure('Schema');
-    return { state, sheets, values, indices, maximumRevision };
+    return { state, sheets, values, indices, maximumRevision, legacySettings };
   }
   async validate(): Promise<Marker> {
     return (await this.inspect()).state;
@@ -313,10 +332,36 @@ export class GoogleSheetsProjection implements ClinicRecordProjection {
   }
   async applySnapshot(snapshot: ClinicProjectionSnapshot): Promise<void> {
     validatePayload(snapshot, this.target.clinicId);
-    const { state, sheets, values, indices, maximumRevision } =
+    const { state, sheets, values, indices, maximumRevision, legacySettings } =
       await this.inspect();
     if (maximumRevision >= snapshot.revision) return;
     const requests: unknown[] = [];
+    // Append only the recognized optional column, in the same atomic batch as the revision.
+    if (
+      legacySettings &&
+      sheets[0]!.columnCount < SHEET_COLUMNS.Clinic_Settings.length
+    )
+      requests.push({
+        appendDimension: {
+          sheetId: sheets[0]!.id,
+          dimension: 'COLUMNS',
+          length: SHEET_COLUMNS.Clinic_Settings.length - sheets[0]!.columnCount,
+        },
+      });
+    if (legacySettings)
+      requests.push({
+        updateCells: {
+          range: {
+            sheetId: sheets[0]!.id,
+            startRowIndex: 0,
+            endRowIndex: 1,
+            startColumnIndex: 0,
+            endColumnIndex: SHEET_COLUMNS.Clinic_Settings.length,
+          },
+          rows: [rowValues(SHEET_COLUMNS.Clinic_Settings)],
+          fields: 'userEnteredValue',
+        },
+      });
     for (let index = 0; index < names.length; index++) {
       const name = names[index]!;
       const sheet = sheets[index]!;
@@ -327,8 +372,13 @@ export class GoogleSheetsProjection implements ClinicRecordProjection {
       const newRows: ProjectionRow[] = [];
       for (const row of snapshot.sheets[name]) {
         const existing = keys.get(row.key);
-        if (existing) next[existing.index] = row.cells;
-        else newRows.push(row);
+        const cells =
+          name === 'Clinic_Settings' &&
+          row.cells.length === SHEET_COLUMNS[name].length - 1
+            ? [...row.cells, null]
+            : row.cells;
+        if (existing) next[existing.index] = cells;
+        else newRows.push({ ...row, cells });
       }
       for (const row of newRows) {
         const free = next.findIndex((r) => r === undefined);

@@ -136,9 +136,13 @@ export class ClinicDurableObject extends DurableObject<WorkerEnv> {
       return repo.readProjectionStatus();
     });
   }
-  configure(input: ClinicConfiguration, actorId: string) {
+  configure(
+    input: ClinicConfiguration,
+    actorId: string,
+    expectedRevision?: number,
+  ) {
     return this.call(input.clinic.clinicId, async (repo) => {
-      await repo.configure(input, actorId);
+      await repo.configure(input, actorId, expectedRevision);
       this.project(repo);
     });
   }

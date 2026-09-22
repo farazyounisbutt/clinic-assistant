@@ -1,3 +1,4 @@
+import { dailyCapacity } from '../../scheduling/capacity.js';
 import { AppointmentService } from '../../appointments/service.js';
 import type { Appointment } from '../../appointments/models.js';
 import type { ClinicAppointmentUnitOfWork } from '../../ports/repositories.js';
@@ -186,7 +187,7 @@ export async function converse(
       choices.push({ id: 'more-dates', title: 'More dates' });
     if (!choices.length)
       return menu(
-        'No appointments are available in the current booking window. Please try again later.',
+        'No appointments are available in the current booking window; dates may be fully booked. Please try again later.',
       );
     show(
       `${prefix}${prefix ? '\n' : ''}Choose an available date (${clinic.timezone}).`,
@@ -199,7 +200,19 @@ export async function converse(
     state.step = 'slot';
     const all = await available(state.date);
     if (!all.length)
-      return dates('That date has no available times. Choose another date.');
+      return dates(
+        dailyCapacity(
+          clinic!,
+          state.date,
+          records.appointments.filter(
+            (a) =>
+              state.workflow !== 'reschedule' ||
+              a.appointmentId !== state.appointmentId,
+          ),
+        ).remaining === 0
+          ? 'That date is fully booked. Please choose another date.'
+          : 'That date has no available times. Choose another date.',
+      );
     if (state.offset >= all.length) state.offset = 0;
     const choices: Choice[] = all
       .slice(state.offset, state.offset + 9)
@@ -399,7 +412,9 @@ export async function converse(
       menu(
         'New bookings and rescheduling are currently unavailable. You can still view or cancel existing appointments.',
       );
-    else if (
+    else if (error.code === 'DailyCapacityReached') {
+      await dates('That date is fully booked. Please choose another date.');
+    } else if (
       [
         'SlotConflict',
         'SlotBlocked',

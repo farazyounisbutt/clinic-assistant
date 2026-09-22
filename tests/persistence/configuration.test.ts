@@ -103,6 +103,7 @@ describe('projection schema v1', () => {
       30,
       true,
       'active',
+      null,
     ]);
     expect(snapshot.sheets.Working_Hours[0]!.key).toBe('1:09:00:10:00');
     expect(snapshot.sheets.Blocked_Slots[0]!.cells.at(-1)).toBe(

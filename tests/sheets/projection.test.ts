@@ -239,3 +239,57 @@ it('refuses an oversized snapshot instead of splitting a revision across batches
   ).rejects.toMatchObject({ category: 'MalformedPayload' });
   expect(fake.writes).toBe(0);
 });
+
+describe('optional daily limit projection compatibility', () => {
+  it('upgrades only legacy settings headers with the next revision and accepts queued legacy snapshots', async () => {
+    const { fake, adapter } = setup();
+    const sheet = fake.sheets.find(
+      (s) => s.properties.title === 'Clinic_Settings',
+    )!;
+    sheet.rows[0]!.pop();
+    sheet.properties.gridProperties.columnCount = 10;
+    const old = projectionSnapshot(clinic.clinicId, 1, data);
+    const legacy = {
+      ...old,
+      sheets: {
+        ...old.sheets,
+        Clinic_Settings: old.sheets.Clinic_Settings.map((r) => ({
+          ...r,
+          cells: r.cells.slice(0, -1),
+        })),
+      },
+    };
+    await adapter.validate();
+    expect(fake.writes).toBe(0);
+    await adapter.applySnapshot(legacy);
+    expect(sheet.rows[0]!.at(-1)).toBe('Daily_Appointment_Limit');
+    expect(fake.rows('Clinic_Settings')[0]!.at(-1)).toBe(null);
+    const next = projectionSnapshot(clinic.clinicId, 2, {
+      ...data,
+      clinic: { ...clinic, dailyAppointmentLimit: 7 },
+    });
+    await adapter.applySnapshot(next);
+    expect(fake.rows('Clinic_Settings')[0]!.at(-1)).toBe(7);
+    const writes = fake.writes;
+    await adapter.applySnapshot(legacy);
+    expect(fake.writes).toBe(writes);
+    expect(fake.rows('Clinic_Settings')[0]!.at(-1)).toBe(7);
+  });
+  it('does not overwrite unexpected cells beyond a legacy settings header', async () => {
+    const { fake, adapter } = setup();
+    const sheet = fake.sheets.find(
+      (s) => s.properties.title === 'Clinic_Settings',
+    )!;
+    sheet.rows[0]!.pop();
+    const snapshot = projectionSnapshot(clinic.clinicId, 1, data);
+    sheet.rows.push([
+      ...snapshot.sheets.Clinic_Settings[0]!.cells.slice(0, -1),
+      'unexpected',
+    ]);
+    await expect(adapter.applySnapshot(snapshot)).rejects.toHaveProperty(
+      'category',
+      'Schema',
+    );
+    expect(fake.writes).toBe(0);
+  });
+});

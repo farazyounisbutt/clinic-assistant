@@ -59,7 +59,9 @@ supports Node; the Worker entrypoint composes the same modules behind internal R
 3. Stage inserts/replacements without making partial changes visible externally.
 4. Check the final staged state for overlapping Scheduled/CheckedIn records on the
    same clinic/date. Reject with `DomainError('SlotConflict')` if any overlap exists.
-5. Commit all writes together, or leave all original state unchanged on any callback
+5. Reject any final-state daily capacity increase beyond the configured limit;
+   permit management of retained records when a limit was lowered below usage.
+6. Commit all writes together, or leave all original state unchanged on any callback
    or commit failure. Resolve the operation only after successful commit.
 
 The service reads its clock after acquiring the coordinator and loading fresh data.

@@ -152,3 +152,13 @@ transaction as any appointment mutation. See [WhatsApp persistence and retention
 ## Clerk transactions
 
 The optional `insertBlockedSlot` unit-of-work capability stages Block Time with appointment writes. A `TimeBlocked` activity, revision, projection, conversation state and reply commit atomically; block insertion never directly writes Sheets. Clerk messages use their configured internal operator ID for audit records. See [clerk operations](clerk-whatsapp.md).
+
+## Capacity and configuration revisions
+
+The optional daily limit is stored in clinic JSON; no SQLite migration is required.
+Final staged capacity may not increase beyond the limit. Existing over-limit data
+remains manageable. `configure` accepts an optional expected revision and rejects
+a stale value with `ConfigurationConflict` inside the shared write mutex. The
+development inspection exposes `configurationRevision`; its configure route accepts
+the decimal revision in `If-Match`. See the
+[reviewed hours update procedure](daily-capacity-and-development-hours.md).

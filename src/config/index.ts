@@ -68,6 +68,16 @@ export function loadConfig(env: Environment): AppConfig {
         1440,
       ),
       bookingHorizonDays: integer(env, 'BOOKING_HORIZON_DAYS', '30', 1),
+      ...(env.DAILY_APPOINTMENT_LIMIT === undefined
+        ? {}
+        : {
+            dailyAppointmentLimit: integer(
+              env,
+              'DAILY_APPOINTMENT_LIMIT',
+              '',
+              1,
+            ),
+          }),
       sameDayBookingAllowed: sameDay === 'true',
       subscriptionStatus: subscription as SubscriptionStatus,
     },

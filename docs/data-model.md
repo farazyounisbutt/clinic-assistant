@@ -63,3 +63,8 @@ must allowlist fields. Fixtures must remain synthetic; exports belong to the cli
 Real clinic identity, doctor name, specialty, working hours, WhatsApp number, and
 customer-specific settings belong in runtime clinic configuration/data. Repository
 examples use demo_clinic, Demo Doctor, Specialist, and synthetic contact details.
+
+## Optional daily capacity
+
+Clinic settings may include `dailyAppointmentLimit`, a positive safe integer.
+Omitted means unlimited. See [capacity policy and migration](daily-capacity-and-development-hours.md).

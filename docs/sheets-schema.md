@@ -138,3 +138,10 @@ operation for cancellation, rescheduling, and lifecycle changes. A future workin
 hours import must validate and commit through the same Durable Object boundary.
 There is no arbitrary bidirectional synchronization. The clinic owns its data;
 inactive subscriptions retain access to existing records and exports.
+
+## Optional capacity extension
+
+`Clinic_Settings` appends `Daily_Appointment_Limit` after `Subscription_Status`.
+Blank means unlimited. Exact legacy headers and queued snapshots are supported;
+the next newer snapshot adds the column atomically. See the
+[compatibility and deployment procedure](daily-capacity-and-development-hours.md).

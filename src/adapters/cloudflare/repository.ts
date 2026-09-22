@@ -1,3 +1,4 @@
+import { assertCapacityNotIncreasedBeyondLimit } from '../../scheduling/capacity.js';
 import { scheduleClinicAlarm } from './alarms.js';
 import { classifyProjectionFailure } from '../../projection/errors.js';
 import type { Appointment } from '../../appointments/models.js';
@@ -139,9 +140,20 @@ export class SqliteClinicRepository
         .map((r) => JSON.parse(r.record) as Appointment),
     );
   }
-  async configure(input: ClinicConfiguration, actorId: string): Promise<void> {
+  async configure(
+    input: ClinicConfiguration,
+    actorId: string,
+    expectedRevision?: number,
+  ): Promise<void> {
     const config = cleanConfiguration(input, this.clinicId);
     await this.locks.writes.run(async () => {
+      if (
+        expectedRevision !== undefined &&
+        (!Number.isSafeInteger(expectedRevision) ||
+          expectedRevision < 0 ||
+          expectedRevision !== this.metadata().revision)
+      )
+        throw new DomainError('ConfigurationConflict');
       await this.commit(actorId, (event) => {
         this.put('clinic_settings', this.clinicId, config.clinic);
         this.storage.sql.exec('DELETE FROM working_hours');
@@ -322,6 +334,11 @@ export class SqliteClinicRepository
           )
             throw new DomainError('SlotConflict');
         }
+      assertCapacityNotIncreasedBeyondLimit(
+        snapshot.clinic!,
+        [...original.values()],
+        [...staged.values()],
+      );
       const changed = [...staged.values()].filter(
         (a) =>
           JSON.stringify(a) !== JSON.stringify(original.get(a.appointmentId)),

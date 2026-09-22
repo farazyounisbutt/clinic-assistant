@@ -411,13 +411,15 @@ export async function converseClerk(
       }
     } else
       menu(
-        error.code === 'SubscriptionInactive'
-          ? 'New reservations are unavailable.'
-          : error.code === 'SlotConflict'
-            ? 'That time overlaps an active appointment. Handle the existing appointment separately.'
-            : error.code === 'SlotBlocked'
-              ? 'That time is already blocked.'
-              : 'The operation is no longer valid. Please start again.',
+        error.code === 'DailyCapacityReached'
+          ? 'Today is fully booked. No more walk-ins can be reserved.'
+          : error.code === 'SubscriptionInactive'
+            ? 'New reservations are unavailable.'
+            : error.code === 'SlotConflict'
+              ? 'That time overlaps an active appointment. Handle the existing appointment separately.'
+              : error.code === 'SlotBlocked'
+                ? 'That time is already blocked.'
+                : 'The operation is no longer valid. Please start again.',
       );
   }
   return finish();

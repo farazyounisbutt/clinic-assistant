@@ -105,3 +105,7 @@ credentials or clinic spreadsheet IDs in committed files.
 
 Task 5 adds the direct HTTP Meta client without new dependencies. Patient flows use
 the existing domain policies. [Clerk WhatsApp operations](docs/clerk-whatsapp.md) now add clinic-scoped staff authorization, walk-ins, lifecycle actions, and blocked time. Doctor messaging remains future work.
+
+Phase 1 adds optional daily capacity and an explicit development-only 09:00–21:00
+schedule update plan. See [policy, compatibility and deployment steps](docs/daily-capacity-and-development-hours.md).
+No runtime clinic configuration changes automatically on deployment.

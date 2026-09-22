@@ -1,3 +1,4 @@
+import { assertCapacityNotIncreasedBeyondLimit } from '../../src/scheduling/capacity.js';
 import type { Appointment } from '../../src/appointments/models.js';
 import { isActiveAppointmentStatus } from '../../src/appointments/lifecycle.js';
 import type { Clinic } from '../../src/clinic/models.js';
@@ -150,6 +151,12 @@ export class InMemoryAppointmentStore
             throw new DomainError('SlotConflict');
         }
       }
+      if (clinic)
+        assertCapacityNotIncreasedBeyondLimit(
+          clinic,
+          this.records.get(clinicId) ?? [],
+          [...staged.values()],
+        );
       if (this.failNextCommit) {
         this.failNextCommit = false;
         throw new Error('Simulated commit failure');

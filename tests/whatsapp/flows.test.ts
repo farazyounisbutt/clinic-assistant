@@ -893,3 +893,130 @@ it('hands a signed public callback to clinic persistence and rejects a failed ha
   } as unknown as WorkerEnv;
   expect((await worker.fetch(request(), broken)).status).toBe(503);
 });
+
+describe('patient daily capacity', () => {
+  it('handles a last-place race with a fully-booked message and another date without losing history', async () =>
+    setup(async (h) => {
+      await h.repo.configure(
+        {
+          clinic: { ...clinic, dailyAppointmentLimit: 1 },
+          workingHours: [hours, { ...hours, dayOfWeek: 2 }],
+          blockedSlots: [],
+        },
+        'test',
+      );
+      await h.bookToConfirm();
+      await h.service.book({
+        clinicId: clinic.clinicId,
+        patientId: 'competitor',
+        patientName: 'Synthetic Competitor',
+        whatsappNumber: '+12025550124',
+        appointmentDate: '2030-09-16',
+        startTime: '09:20',
+        source: 'Phone',
+        createdBy: 'test',
+      });
+      await h.click('confirm');
+      expect(h.body()).toContain('fully booked');
+      expect(h.choices().some((c) => c.title === '2030-09-17')).toBe(true);
+      expect(h.choices().some((c) => c.title === '2030-09-16')).toBe(false);
+      expect(h.repo.exportRecords().appointments).toHaveLength(1);
+    }));
+  it('offers same-day alternatives when rescheduling at capacity', async () =>
+    setup(async (h) => {
+      await h.repo.configure(
+        {
+          clinic: { ...clinic, dailyAppointmentLimit: 1 },
+          workingHours: [hours],
+          blockedSlots: [],
+        },
+        'test',
+      );
+      const a = await h.book();
+      await h.manage(a.appointmentId);
+      await h.click('reschedule');
+      expect(h.choices().some((c) => c.title === '2030-09-16')).toBe(true);
+    }));
+});
+
+it('redirects a date selection that fills after the date list was displayed', async () =>
+  setup(async (h) => {
+    await h.repo.configure(
+      {
+        clinic: { ...clinic, dailyAppointmentLimit: 1 },
+        workingHours: [hours, { ...hours, dayOfWeek: 2 }],
+        blockedSlots: [],
+      },
+      'test',
+    );
+    await h.text('hi');
+    await h.click('book');
+    expect(h.choices().some((c) => c.title === '2030-09-16')).toBe(true);
+    await h.book();
+    const before = h.repo.exportRecords();
+    await h.click('date:2030-09-16');
+    expect(h.body()).toContain('fully booked');
+    expect(h.choices().some((c) => c.title === '2030-09-16')).toBe(false);
+    expect(h.choices().some((c) => c.title === '2030-09-17')).toBe(true);
+    expect(h.repo.exportRecords()).toEqual(before);
+  }));
+
+it('completes a same-day WhatsApp reschedule when the original occupies the final daily place', async () =>
+  setup(async (h) => {
+    await h.repo.configure(
+      {
+        clinic: { ...clinic, dailyAppointmentLimit: 1 },
+        workingHours: [hours],
+        blockedSlots: [],
+      },
+      'test',
+    );
+    const original = await h.book();
+    expect(await h.service.availability(clinic.clinicId, '2030-09-16')).toEqual(
+      [],
+    );
+    const before = h.repo.exportRecords();
+    await h.manage(original.appointmentId);
+    await h.click('reschedule');
+    await h.click('date:2030-09-16');
+    await h.click('slot:09:20');
+    expect(h.body()).toContain('Confirm reschedule');
+    expect(h.repo.exportRecords()).toEqual(before);
+    await h.click('confirm');
+    const after = h.repo.exportRecords();
+    expect(after.appointments).toHaveLength(2);
+    const replacement = after.appointments.find(
+      (a) => a.status === 'Scheduled',
+    )!;
+    expect(replacement).toMatchObject({
+      appointmentDate: original.appointmentDate,
+      startTime: '09:20',
+      endTime: '09:40',
+      patientId: original.patientId,
+      rescheduledFrom: original.appointmentId,
+      rescheduledTo: null,
+    });
+    expect(
+      after.appointments.find(
+        (a) => a.appointmentId === original.appointmentId,
+      ),
+    ).toEqual({
+      ...original,
+      status: 'Rescheduled',
+      rescheduledTo: replacement.appointmentId,
+    });
+    expect(after.patients).toEqual(before.patients);
+    expect(
+      after.activity
+        .slice(before.activity.length)
+        .map((a) => a.action)
+        .sort(),
+    ).toEqual(['AppointmentCreated', 'AppointmentRescheduled']);
+    expect(h.body()).toContain(
+      `Appointment confirmed.\nReference: ${replacement.appointmentId}`,
+    );
+    expect(h.body()).toContain('2030-09-16 at 09:20');
+    expect(await h.service.availability(clinic.clinicId, '2030-09-16')).toEqual(
+      [],
+    );
+  }));

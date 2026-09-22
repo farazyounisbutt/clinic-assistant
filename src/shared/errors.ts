@@ -1,6 +1,7 @@
 export type DomainErrorCode =
   | 'ClinicNotFound'
   | 'InvalidClinicConfiguration'
+  | 'ConfigurationConflict'
   | 'SubscriptionInactive'
   | 'DateOutsideBookingHorizon'
   | 'SameDayBookingDisabled'
@@ -11,6 +12,7 @@ export type DomainErrorCode =
   | 'SlotOverlapsBreak'
   | 'SlotBlocked'
   | 'SlotConflict'
+  | 'DailyCapacityReached'
   | 'InvalidAppointmentTransition'
   | 'AppointmentNotFound'
   | 'InvalidReschedule'

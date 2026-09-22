@@ -731,3 +731,160 @@ it('allows only one of two concurrent RPC reservations of the same slot', async 
     }),
   ]);
 });
+
+describe('daily capacity persistence', () => {
+  it('retains the optional limit across repository recreation, serializes competing slots, and preserves data on configuration update', async () => {
+    await scenario(async (repo, service) => {
+      const config = {
+        clinic: { ...example, dailyAppointmentLimit: 1 },
+        workingHours: [exampleHours],
+        blockedSlots: [],
+      };
+      await repo.configure(config, actor.id);
+      const before = repo.exportRecords();
+      const results = await Promise.allSettled([
+        service.book(booking),
+        service.book({
+          ...booking,
+          startTime: '09:20',
+          source: 'WalkIn',
+          whatsappNumber: '',
+        }),
+      ]);
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((r) => r.status === 'rejected')).toEqual([
+        expect.objectContaining({
+          reason: expect.objectContaining({ code: 'DailyCapacityReached' }),
+        }),
+      ]);
+      const booked = repo.exportRecords();
+      expect(booked.clinic!.dailyAppointmentLimit).toBe(1);
+      expect(booked.activity.length - before.activity.length).toBe(1);
+      expect(booked.appointments).toHaveLength(1);
+      // Configuration is revision 2; the booking is revision 3. A stale update must not erase it.
+      await expect(repo.configure(config, actor.id, 2)).rejects.toMatchObject({
+        code: 'ConfigurationConflict',
+      });
+      expect(repo.exportRecords()).toEqual(booked);
+      await repo.configure(
+        { ...config, workingHours: [{ ...exampleHours, endTime: '21:00' }] },
+        actor.id,
+        3,
+      );
+      const updated = repo.exportRecords();
+      expect(updated.appointments).toEqual(booked.appointments);
+      expect(updated.patients).toEqual(booked.patients);
+      expect(updated.activity).toHaveLength(booked.activity.length + 1);
+    });
+    await evictDurableObject(stub());
+    const result = await stub().exportRecords(clinicId);
+    expect(result).toMatchObject({
+      ok: true,
+      value: { clinic: { dailyAppointmentLimit: 1 } },
+    });
+  });
+  it('backstops direct writes at capacity and permits management of grandfathered records', async () => {
+    await scenario(async (repo, service) => {
+      const a = await service.book(booking);
+      await service.book({ ...booking, startTime: '09:20' });
+      await repo.configure(
+        {
+          clinic: { ...example, dailyAppointmentLimit: 1 },
+          workingHours: [exampleHours],
+          blockedSlots: [],
+        },
+        actor.id,
+      );
+      const before = repo.exportRecords();
+      await expect(
+        repo.runExclusive(clinicId, async (unit) =>
+          unit.insert({
+            ...a,
+            appointmentId: 'bypass',
+            startTime: '09:40',
+            endTime: '10:00',
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'DailyCapacityReached' });
+      expect(repo.exportRecords()).toEqual(before);
+      await expect(
+        service.transition({
+          clinicId,
+          appointmentId: a.appointmentId,
+          to: 'NoShow',
+          actor,
+        }),
+      ).resolves.toMatchObject({ status: 'NoShow' });
+    });
+  });
+});
+
+describe('capacity races involving rescheduling', () => {
+  it.each(['booking', 'reschedule', 'walk-in'] as const)(
+    'serializes rescheduling against %s for the last place on another date',
+    async (first) => {
+      await scenario(async (repo, service) => {
+        await repo.configure(
+          {
+            clinic: { ...example, dailyAppointmentLimit: 1 },
+            workingHours: [exampleHours, { ...exampleHours, dayOfWeek: 2 }],
+            blockedSlots: [],
+          },
+          actor.id,
+        );
+        const original = await service.book(booking);
+        const before = repo.exportRecords();
+        const move = () =>
+          service.reschedule({
+            clinicId,
+            appointmentId: original.appointmentId,
+            appointmentDate: '2030-09-17',
+            startTime: '09:00',
+            createdBy: actor.id,
+          });
+        const reserve = () =>
+          service.book({
+            ...booking,
+            appointmentDate: '2030-09-17',
+            startTime: '09:20',
+            ...(first === 'walk-in'
+              ? { source: 'WalkIn' as const, whatsappNumber: '' }
+              : {}),
+          });
+        const results = await Promise.allSettled(
+          first === 'reschedule' ? [move(), reserve()] : [reserve(), move()],
+        );
+        expect(results[0]!.status).toBe('fulfilled');
+        expect(results[1]).toMatchObject({
+          status: 'rejected',
+          reason: { code: 'DailyCapacityReached' },
+        });
+        const after = repo.exportRecords();
+        expect(after.appointments).toHaveLength(2);
+        expect(
+          after.appointments.filter((a) => a.appointmentDate === '2030-09-17'),
+        ).toHaveLength(1);
+        expect(
+          new Set(after.appointments.map((a) => a.appointmentId)).size,
+        ).toBe(2);
+        const retained = after.appointments.find(
+          (a) => a.appointmentId === original.appointmentId,
+        )!;
+        if (first === 'reschedule') {
+          const replacement = after.appointments.find(
+            (a) => a.appointmentDate === '2030-09-17',
+          )!;
+          expect(retained).toMatchObject({
+            status: 'Rescheduled',
+            rescheduledTo: replacement.appointmentId,
+          });
+          expect(replacement.rescheduledFrom).toBe(original.appointmentId);
+          expect(after.activity).toHaveLength(before.activity.length + 2);
+        } else {
+          expect(retained).toEqual(original);
+          expect(after.activity).toHaveLength(before.activity.length + 1);
+        }
+      });
+    },
+  );
+});

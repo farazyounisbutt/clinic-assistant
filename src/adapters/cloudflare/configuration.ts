@@ -80,6 +80,9 @@ export function cleanConfiguration(
       timezone: c.timezone,
       appointmentDurationMinutes: c.appointmentDurationMinutes,
       bookingHorizonDays: c.bookingHorizonDays,
+      ...(c.dailyAppointmentLimit === undefined
+        ? {}
+        : { dailyAppointmentLimit: c.dailyAppointmentLimit }),
       sameDayBookingAllowed: c.sameDayBookingAllowed,
       subscriptionStatus: c.subscriptionStatus,
     },

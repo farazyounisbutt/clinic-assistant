@@ -1,3 +1,4 @@
+import { dailyCapacity } from './capacity.js';
 import type { Appointment } from '../appointments/models.js';
 import { AppointmentStatus } from '../appointments/models.js';
 import { isActiveAppointmentStatus } from '../appointments/lifecycle.js';
@@ -106,12 +107,23 @@ function prepare(snapshot: SchedulingSnapshot, date: string, now: Date) {
   const appointments = records
     .filter((a) => isActiveAppointmentStatus(a.status))
     .map(interval);
-  return { clinic, periods, breaks, blocks, appointments, resolve, nowMs };
+  return {
+    clinic,
+    periods,
+    breaks,
+    blocks,
+    appointments,
+    resolve,
+    nowMs,
+    capacity: dailyCapacity(clinic, date, records),
+  };
 }
 
 type Context = ReturnType<typeof prepare>;
 
 function validateSlot(context: Context, startTime: string): TimeRange {
+  if (context.capacity.remaining === 0)
+    throw new DomainError('DailyCapacityReached');
   const start = minutes(startTime);
   const end = start + context.clinic.appointmentDurationMinutes;
   if (!context.periods.length) throw new DomainError('ClinicClosed');
@@ -176,6 +188,7 @@ export function getAvailableSlots(
   now: Date,
 ): readonly TimeRange[] {
   const context = prepare(snapshot, date, now);
+  if (context.capacity.remaining === 0) return [];
   const starts = new Set<number>();
   for (const period of context.periods) {
     for (

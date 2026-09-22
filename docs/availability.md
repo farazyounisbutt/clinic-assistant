@@ -29,7 +29,9 @@ runtime clinic data; no customer schedule is seeded.
    Do not join periods across gaps. Sort candidates and deduplicate identical starts.
 5. Resolve candidate endpoints to unambiguous instants in the clinic timezone and
    enforce the future-start rule and full elapsed appointment duration.
-6. Remove every candidate overlapping any applicable break, blocked interval, or
+6. If a configured daily capacity is exhausted, return no slots. Capacity counts
+   Scheduled, CheckedIn, Completed and NoShow, separately from interval occupancy.
+7. Remove every candidate overlapping any applicable break, blocked interval, or
    Scheduled/CheckedIn appointment on the same clinic/date. Breaks from applicable
    periods are combined, so another overlapping period cannot bypass a break.
 
@@ -75,3 +77,6 @@ appointments. Test fixtures cover both ordinary and DST-transition dates.
 Availability is a view, never a reservation. The service reloads data and rechecks
 all rules inside the final atomic booking/rescheduling operation. Every future
 persistence adapter must honor the [atomic repository contract](architecture.md).
+
+See [daily capacity](daily-capacity-and-development-hours.md) for atomic enforcement,
+rescheduling credit, and configuration compatibility.

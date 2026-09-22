@@ -126,7 +126,9 @@ export class FakeGoogleSheets {
           const r = request.appendDimension;
           this.sheets.find(
             (s) => s.properties.sheetId === r.sheetId,
-          )!.properties.gridProperties.rowCount += Number(r.length);
+          )!.properties.gridProperties[
+            r.dimension === 'COLUMNS' ? 'columnCount' : 'rowCount'
+          ] += Number(r.length);
         }
         if (request.createDeveloperMetadata)
           this.metadata.push({

@@ -1,3 +1,5 @@
+import { SqliteClinicRepository } from '../../src/adapters/cloudflare/repository.js';
+import { AppointmentService } from '../../src/appointments/service.js';
 import { env } from 'cloudflare:workers';
 import { runInDurableObject, reset } from 'cloudflare:test';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -209,4 +211,87 @@ it('routes only allowed development operations and signs replay through the norm
   expect(
     await (await development.fetch(request('inspect'), local)).text(),
   ).toBe('Development operation failed');
+});
+
+it('returns HTTP 409 for a stale configuration revision without changing persisted records or projection work', async () => {
+  await runInDurableObject(
+    bindings.CLINICS.getByName(TEST_CLINIC),
+    async (_instance, state) => {
+      const clock = { now: () => new Date('2030-09-16T03:00:00Z') };
+      const repo = new SqliteClinicRepository(
+        state.storage,
+        TEST_CLINIC,
+        clock,
+      );
+      const initial = {
+        clinic: { ...clinic, clinicId: TEST_CLINIC, dailyAppointmentLimit: 2 },
+        workingHours: [{ ...hours, clinicId: TEST_CLINIC }],
+        blockedSlots: [
+          {
+            id: 'synthetic-block',
+            clinicId: TEST_CLINIC,
+            date: '2030-09-16',
+            startTime: '09:40',
+            endTime: '10:00',
+            reason: 'Synthetic',
+          },
+        ],
+      };
+      await repo.configure(initial, 'synthetic');
+      const instance = new ClinicDurableObject(state, bindings);
+      const staleRevision = (await instance.inspectDevelopment())
+        .configurationRevision;
+      const service = new AppointmentService(repo, clock, {
+        next: () => 'synthetic-appointment',
+      });
+      await service.book({
+        clinicId: TEST_CLINIC,
+        patientId: 'synthetic-patient',
+        patientName: 'Synthetic Patient',
+        whatsappNumber: '+12025550123',
+        appointmentDate: '2030-09-16',
+        startTime: '09:00',
+        source: 'WhatsApp',
+        createdBy: 'synthetic',
+      });
+      const before = repo.exportRecords();
+      const metadata = state.storage.sql
+        .exec('SELECT * FROM metadata')
+        .toArray();
+      const projection = state.storage.sql
+        .exec('SELECT * FROM projection_outbox ORDER BY revision')
+        .toArray();
+      const alarm = await state.storage.getAlarm();
+      const update = request('configure', {
+        ...initial,
+        clinic: { ...initial.clinic, dailyAppointmentLimit: 3 },
+        blockedSlots: [],
+      });
+      update.headers.set('if-match', String(staleRevision));
+      const response = await development.fetch(update, {
+        ...config,
+        CLINICS: {
+          getByName: (id: string) => {
+            expect(id).toBe(TEST_CLINIC);
+            return instance;
+          },
+        },
+      } as unknown as DevelopmentEnv);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        error: { code: 'ConfigurationConflict' },
+      });
+      expect(repo.exportRecords()).toEqual(before);
+      expect(
+        state.storage.sql.exec('SELECT * FROM metadata').toArray(),
+      ).toEqual(metadata);
+      expect(
+        state.storage.sql
+          .exec('SELECT * FROM projection_outbox ORDER BY revision')
+          .toArray(),
+      ).toEqual(projection);
+      expect(await state.storage.getAlarm()).toBe(alarm);
+    },
+  );
 });

@@ -18,6 +18,7 @@ export const SHEET_COLUMNS = {
     'Booking_Horizon_Days',
     'Same_Day_Booking_Allowed',
     'Subscription_Status',
+    'Daily_Appointment_Limit',
   ],
   Working_Hours: [
     'Record_Key',
@@ -109,6 +110,7 @@ export function projectionSnapshot(
               c.bookingHorizonDays,
               c.sameDayBookingAllowed,
               c.subscriptionStatus,
+              c.dailyAppointmentLimit ?? null,
             ),
           ]
         : [],

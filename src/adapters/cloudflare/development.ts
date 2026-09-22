@@ -75,6 +75,11 @@ export class ClinicDurableObject extends ProductionClinic {
         .toArray();
       return {
         ...records,
+        configurationRevision: this.ctx.storage.sql
+          .exec<{ revision: number }>(
+            'SELECT revision FROM metadata WHERE singleton=1',
+          )
+          .one().revision,
         patients: records.patients.map((p) => ({
           ...p,
           whatsappNumber: mask(p.whatsappNumber),
@@ -224,7 +229,20 @@ export default {
           config.clinic.specialty !== 'Specialist'
         )
           return new Response('Synthetic clinic only', { status: 400 });
-        return Response.json(await stub.configure(config, 'development-test'));
+        const revision = request.headers.get('if-match');
+        if (revision !== null && !/^\d+$/.test(revision))
+          return new Response('Invalid revision', { status: 400 });
+        const result = await stub.configure(
+          config,
+          'development-test',
+          revision === null ? undefined : Number(revision),
+        );
+        return Response.json(result, {
+          status:
+            !result.ok && result.error.code === 'ConfigurationConflict'
+              ? 409
+              : 200,
+        });
       }
       if (path === '/__development/compete') {
         const input = (await request.json()) as { date: string; time: string };

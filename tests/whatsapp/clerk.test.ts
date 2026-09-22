@@ -931,3 +931,34 @@ it('rechecks active appointments when a block confirmation races a booking', asy
       h.repo.exportRecords().activity.filter((e) => e.action === 'TimeBlocked'),
     ).toHaveLength(0);
   }));
+
+it('rechecks daily capacity on walk-in confirmation without staff override or partial patient writes', async () =>
+  setup(async (h) => {
+    await h.repo.configure(
+      {
+        clinic: { ...clinic, dailyAppointmentLimit: 1 },
+        workingHours: [hours],
+        blockedSlots: [],
+      },
+      'test',
+    );
+    await h.text('clerk');
+    await h.click('walk');
+    await h.text('Synthetic Walk-in');
+    await h.click('slot:09:00');
+    await h.click('skip');
+    await h.service.book({
+      clinicId: clinic.clinicId,
+      patientId: 'other',
+      patientName: 'Synthetic Other',
+      whatsappNumber: '+12025550124',
+      appointmentDate: '2030-09-16',
+      startTime: '09:20',
+      source: 'WhatsApp',
+      createdBy: 'patient',
+    });
+    const before = h.repo.exportRecords();
+    await h.click('confirm');
+    expect(h.last().body).toContain('fully booked');
+    expect(h.repo.exportRecords()).toEqual(before);
+  }));

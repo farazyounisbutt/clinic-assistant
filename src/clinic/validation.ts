@@ -18,6 +18,9 @@ export function assertClinicConfiguration(
     clinic.appointmentDurationMinutes > 1440 ||
     !Number.isSafeInteger(clinic.bookingHorizonDays) ||
     clinic.bookingHorizonDays < 1 ||
+    (clinic.dailyAppointmentLimit !== undefined &&
+      (!Number.isSafeInteger(clinic.dailyAppointmentLimit) ||
+        clinic.dailyAppointmentLimit < 1)) ||
     typeof clinic.sameDayBookingAllowed !== 'boolean' ||
     !Object.values(SubscriptionStatus).includes(clinic.subscriptionStatus)
   ) {
