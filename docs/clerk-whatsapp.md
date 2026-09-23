@@ -32,9 +32,12 @@ a reply already accepted by Meta or already in flight.
 ## Menu and state
 
 An authorized clerk sending `menu`, `restart`, `staff`, `clerk`, `hi`, or `hello`
-gets a deterministic six-row list:
+gets a deterministic nine-row list:
 
 - Today's Appointments
+- Tomorrow's Appointments
+- Choose Date
+- Search Appointment
 - Add Walk-in
 - Check In Patient
 - Mark Completed
@@ -78,8 +81,9 @@ checkedInAt, start time, appointment ID ordering. No patient is checked in impli
 
 ## Walk-ins
 
-The clerk enters a display name (at most 80 characters), chooses one of today's
-currently generated available slots, enters an optional operational note (at most
+The clerk enters a display name (at most 80 characters), supplies an optional mobile
+number or selects **Skip**, chooses one of today's currently generated available
+slots, enters an optional operational note (at most
 160 characters), and confirms. Slots page in groups of nine. The final write calls
 `AppointmentService.book` with source `WalkIn`; grid, future-start, same-day, horizon,
 subscription, and conflict rules are unchanged. A lost slot returns fresh alternatives.
@@ -87,7 +91,8 @@ This POC therefore does not insert an arbitrary appointment starting immediately
 
 Walk-ins without a supplied contact use an empty `whatsappNumber`, permitted only
 for source WalkIn. No fabricated phone number or clerk phone is used. A new patient
-ID is allocated for each such reservation and projected to Patients. The patient
+ID is allocated for every walk-in reservation and projected to Patients, even when
+two walk-ins share a number; contact matching never merges patient identities. The patient
 cannot look up a contactless walk-in via WhatsApp identity; staff manage it by
 reference. All other booking sources still require the existing contact format.
 
@@ -151,3 +156,27 @@ Before a separately authorized deployment/live test:
 
 This milestone neither deploys automatically nor adds Doctor reports, reminders,
 LLMs, clinical records, billing, staff-management UI, or multi-doctor scheduling.
+
+## Date navigation and search
+
+Today and Tomorrow use the configured clinic timezone. Choose Date accepts a valid
+`YYYY-MM-DD` clinic-local calendar date, including historical dates and dates beyond
+the booking horizon; these are reads, not booking requests. Invalid dates keep the
+clerk at the date prompt. Detail replies include the date and AM/PM time range.
+
+Search matches appointment patient-name snapshots by case-insensitive substring
+(with normalized whitespace), or an exact existing full mobile number including
+country code, or the equivalent Pakistani `03...` format. Supplied Pakistani local
+numbers normalize to `+92...`; other international numbers retain their country
+code. Spaces, parentheses, dots and hyphens are ignored. Malformed numbers are
+rejected; partial-number searches are unsupported. This is format validation, not
+verification that a number exists or belongs to a patient. Names require 2–80
+characters after whitespace normalization; empty/whitespace-only queries are
+rejected. Contactless walk-ins remain searchable by name and are skipped safely
+when searching by mobile. Results span stored dates and all appointment statuses.
+
+Lists are ordered by date, start time and UUID, with nine appointments and a More
+row when needed. Each page/detail query uses fresh clinic-scoped records. Search
+lists include the appointment date but omit mobile numbers. Existing staff checks
+run on every message and again before sending queued replies. These queries never
+change appointments, activity events, daily capacity or projection revisions.

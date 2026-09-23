@@ -1,3 +1,4 @@
+import { normalizeMobileNumber } from '../../patients/mobile.js';
 import {
   formatClinicTime,
   formatClinicTimeRange,
@@ -15,7 +16,21 @@ import { DomainError } from '../../shared/errors.js';
 import type { Incoming, Message, Choice } from './models.js';
 import { SESSION_MS } from './conversation.js';
 
-type Operation = 'today' | 'walk' | 'checkin' | 'complete' | 'noshow' | 'block';
+type Operation =
+  | 'today'
+  | 'tomorrow'
+  | 'choose-date'
+  | 'search'
+  | 'walk'
+  | 'checkin'
+  | 'complete'
+  | 'noshow'
+  | 'block';
+const isReadOperation = (operation: Operation | null) =>
+  operation === 'today' ||
+  operation === 'tomorrow' ||
+  operation === 'choose-date' ||
+  operation === 'search';
 export interface ClerkConversation {
   readonly kind: 'clerk';
   readonly operatorId: string;
@@ -35,7 +50,10 @@ export interface ClerkConversation {
     | 'after-walk'
     | 'date'
     | 'start'
-    | 'end';
+    | 'end'
+    | 'browse-date'
+    | 'search'
+    | 'mobile';
   operation: Operation | null;
   date: string | null;
   slot: string | null;
@@ -44,6 +62,8 @@ export interface ClerkConversation {
   note: string | null;
   appointmentId: string | null;
   offset: number;
+  query: string | null;
+  mobile: string | null;
   prompt: Message;
 }
 export interface ClerkOutcome {
@@ -52,6 +72,9 @@ export interface ClerkOutcome {
 }
 const options: readonly Choice[] = [
   { id: 'today', title: "Today's Appointments" },
+  { id: 'tomorrow', title: "Tomorrow's Appointments" },
+  { id: 'choose-date', title: 'Choose Date' },
+  { id: 'search', title: 'Search Appointment' },
   { id: 'walk', title: 'Add Walk-in' },
   { id: 'checkin', title: 'Check In Patient' },
   { id: 'complete', title: 'Mark Completed' },
@@ -93,6 +116,8 @@ export async function converseClerk(
     note: null,
     appointmentId: null,
     offset: 0,
+    query: null,
+    mobile: null,
     prompt: { type: 'text', body: 'Clerk menu' },
     ...(valid ? structuredClone(previous) : {}),
     token: crypto.randomUUID(),
@@ -119,6 +144,8 @@ export async function converseClerk(
     state.note = null;
     state.appointmentId = null;
     state.offset = 0;
+    state.query = null;
+    state.mobile = null;
     show(`${prefix}${prefix ? '\n' : ''}Clerk menu`, options, 'list');
   };
   const finish = (): ClerkOutcome => ({
@@ -168,34 +195,64 @@ export async function converseClerk(
       selected.push({ id: 'more', title: 'More' });
     show(body, selected, 'list');
   };
-  const eligible = async () =>
-    (await service.listAppointments(clinic.clinicId, today))
+  const eligible = async () => {
+    const query = state.query ?? '';
+    const phoneSearch = /^[+\d\s().-]+$/.test(query);
+    const normalizedMobile = normalizeMobileNumber(query);
+    const normalize = (value: string) =>
+      value.trim().replace(/\s+/g, ' ').toLowerCase();
+    const rows =
+      state.operation === 'search'
+        ? records.appointments.filter(
+            (a) =>
+              a.clinicId === clinic.clinicId &&
+              (phoneSearch
+                ? normalizedMobile !== null &&
+                  normalizeMobileNumber(a.whatsappNumber) === normalizedMobile
+                : normalize(a.patientName).includes(normalize(query))),
+          )
+        : await service.listAppointments(
+            clinic.clinicId,
+            isReadOperation(state.operation) ? (state.date ?? today) : today,
+          );
+    return rows
       .filter(
         (a) =>
-          state.operation === 'today' ||
-          a.status ===
-            (state.operation === 'complete' ? 'CheckedIn' : 'Scheduled'),
+          a.clinicId === clinic.clinicId &&
+          (isReadOperation(state.operation) ||
+            a.status ===
+              (state.operation === 'complete' ? 'CheckedIn' : 'Scheduled')),
       )
       .sort((a, b) =>
-        `${a.startTime}:${a.appointmentId}`.localeCompare(
-          `${b.startTime}:${b.appointmentId}`,
+        `${a.appointmentDate}:${a.startTime}:${a.appointmentId}`.localeCompare(
+          `${b.appointmentDate}:${b.startTime}:${b.appointmentId}`,
         ),
       );
+  };
   const appointments = async () => {
     const rows = await eligible();
     state.step = 'appointment';
-    state.date = today;
+    if (!isReadOperation(state.operation)) state.date = today;
     if (!rows.length) {
-      menu('No eligible appointments today.');
+      menu(
+        state.operation === 'search'
+          ? 'No matching appointments.'
+          : state.date === today
+            ? 'No eligible appointments today.'
+            : `No appointments for ${state.date}.`,
+      );
       return;
     }
+    if (state.offset >= rows.length) state.offset = 0;
     page(
-      `Today (${today}) — ${clinic.timezone}`,
+      state.operation === 'search'
+        ? `Search results — ${clinic.timezone}`
+        : `${state.date === today ? 'Today' : 'Appointments'} (${state.date}) — ${clinic.timezone}`,
       rows.map((a) => ({
         id: `appointment:${a.appointmentId}`,
         title: `${formatClinicTime(a.startTime)} ${a.patientName}`.slice(0, 24),
         description:
-          `${statusLabel(a)} · ${a.source} · ${a.appointmentId.slice(0, 8)}`.slice(
+          `${state.operation === 'search' ? a.appointmentDate + ' · ' : ''}${statusLabel(a)} · ${a.source} · ${a.appointmentId.slice(0, 8)}`.slice(
             0,
             72,
           ),
@@ -259,7 +316,52 @@ export async function converseClerk(
       } else if (action === 'block') {
         state.step = 'date';
         show(`Block date: YYYY-MM-DD (${clinic.timezone}).`);
-      } else await appointments();
+      } else if (action === 'choose-date') {
+        state.step = 'browse-date';
+        show(`Appointment date: YYYY-MM-DD (${clinic.timezone}).`);
+      } else if (action === 'search') {
+        state.step = 'search';
+        show(
+          'Enter a patient name (at least 2 characters) or existing mobile number (03... or international +country code).',
+        );
+      } else {
+        state.date =
+          action === 'tomorrow'
+            ? new Date((calendarDay(today) + 1) * 86_400_000)
+                .toISOString()
+                .slice(0, 10)
+            : today;
+        await appointments();
+      }
+    } else if (state.step === 'browse-date' && text) {
+      try {
+        calendarDay(text);
+      } catch {
+        show(
+          `Enter a valid appointment date: YYYY-MM-DD (${clinic.timezone}).`,
+        );
+        return finish();
+      }
+      state.date = text;
+      state.offset = 0;
+      await appointments();
+    } else if (state.step === 'search' && incoming.input.type === 'text') {
+      const query = text.replace(/\s+/g, ' ').trim();
+      const phone = /^[+\d\s().-]+$/.test(query);
+      const mobile = normalizeMobileNumber(query);
+      if (
+        !query ||
+        query.length > 80 ||
+        (phone ? mobile === null : query.length < 2)
+      ) {
+        show(
+          'Enter a name of 2–80 characters or a full mobile number (03... or international +country code).',
+        );
+        return finish();
+      }
+      state.query = phone ? mobile : query;
+      state.offset = 0;
+      await appointments();
     } else if (state.step === 'appointment' && action === 'more') {
       state.offset += 9;
       await appointments();
@@ -272,9 +374,9 @@ export async function converseClerk(
       );
       if (!a) throw new DomainError('AppointmentNotFound');
       state.appointmentId = a.appointmentId;
-      state.date = today;
-      const summary = `${formatClinicTimeRange(a.startTime, a.endTime)} (${clinic.timezone})\n${a.patientName.slice(0, 80)}\nReference: ${a.appointmentId}\n${statusLabel(a)} · ${a.source}`;
-      if (state.operation === 'today') menu(summary);
+      state.date = a.appointmentDate;
+      const summary = `${a.appointmentDate} ${formatClinicTimeRange(a.startTime, a.endTime)} (${clinic.timezone})\n${a.patientName.slice(0, 80)}\nReference: ${a.appointmentId}\n${statusLabel(a)} · ${a.source}`;
+      if (isReadOperation(state.operation)) menu(summary);
       else
         confirm(
           `${state.operation === 'checkin' ? 'Check in' : state.operation === 'complete' ? 'Mark completed' : 'Mark no show'}?\n${summary}`,
@@ -284,6 +386,25 @@ export async function converseClerk(
         show('Use a name of at most 80 characters.');
       } else {
         state.name = text;
+        state.step = 'mobile';
+        show(
+          'Optional patient mobile number: 03... or international +country code. Choose Skip if unavailable.',
+          [{ id: 'skip-mobile', title: 'Skip' }],
+        );
+      }
+    } else if (
+      state.step === 'mobile' &&
+      (incoming.input.type === 'text' || action === 'skip-mobile')
+    ) {
+      const mobile =
+        action === 'skip-mobile' ? null : normalizeMobileNumber(text);
+      if (action !== 'skip-mobile' && !mobile) {
+        show(
+          'Enter a valid mobile number (03... or international +country code), or choose Skip.',
+          [{ id: 'skip-mobile', title: 'Skip' }],
+        );
+      } else {
+        state.mobile = mobile;
         state.offset = 0;
         await slots();
       }
@@ -340,7 +461,7 @@ export async function converseClerk(
           clinicId: clinic.clinicId,
           patientId: crypto.randomUUID(),
           patientName: state.name!,
-          whatsappNumber: '',
+          whatsappNumber: state.mobile ?? '',
           appointmentDate: today,
           startTime: state.slot!,
           source: 'WalkIn',

@@ -1,3 +1,4 @@
+import { converseClerk } from '../../src/adapters/whatsapp/clerk.js';
 import { env } from 'cloudflare:workers';
 import { reset, runInDurableObject, evictDurableObject } from 'cloudflare:test';
 import { afterEach, expect, it } from 'vitest';
@@ -81,6 +82,7 @@ async function harness(storage: DurableObjectStorage) {
     await text('menu');
     await click('walk');
     await text('Synthetic Walk-in');
+    await click('skip-mobile');
     await click('slot:09:00');
     await click('skip');
     await click('confirm');
@@ -128,7 +130,7 @@ it('authorizes by clinic, identity and role, never command text', async () =>
   setup(async (h) => {
     await h.text('staff');
     expect(h.last().body).toContain('Clerk');
-    expect(h.choices()).toHaveLength(6);
+    expect(h.choices()).toHaveLength(9);
     await h.text('staff', patient);
     expect(h.last().body).not.toContain('Clerk');
     h.setAuth(
@@ -307,6 +309,7 @@ it('rechecks a walk-in slot lost before confirmation and refreshes alternatives'
     await h.text('menu');
     await h.click('walk');
     await h.text('Synthetic Name');
+    await h.click('skip-mobile');
     await h.click('slot:09:00');
     await h.text('Arrival assistance');
     await h.service.book({
@@ -336,6 +339,7 @@ it('rejects off-grid forged actions and duplicate walk-in confirmation', async (
     await h.text('menu');
     await h.click('walk');
     await h.text('Synthetic Name');
+    await h.click('skip-mobile');
     const token = h.choices()[0]!.id.split(':')[0];
     await h.receive({ type: 'action', value: `${token}:slot:09:01` });
     expect(h.repo.exportRecords().appointments).toHaveLength(0);
@@ -407,6 +411,7 @@ it('rechecks subscription at walk-in confirmation', async () =>
     await h.text('menu');
     await h.click('walk');
     await h.text('Synthetic Name');
+    await h.click('skip-mobile');
     await h.click('slot:09:00');
     await h.click('skip');
     await h.repo.configure(
@@ -604,6 +609,7 @@ it('recovers a clerk confirmation after actual DO eviction without duplicating i
     await h.text('staff');
     await h.click('walk');
     await h.text('Recovery Example');
+    await h.click('skip-mobile');
     await h.click('slot:09:00');
     await h.click('skip');
     pending = { type: 'action', value: h.choices()[0]!.id };
@@ -855,6 +861,7 @@ it('handles long names, unsupported messages, restart and slot pagination safely
     await h.text('x'.repeat(81));
     expect(h.last().body).toContain('at most 80');
     await h.text('Example');
+    await h.click('skip-mobile');
     expect(h.choices()).toHaveLength(10);
     await h.click('more');
     expect(h.choices()[0]!.title).toContain('12:00');
@@ -864,6 +871,7 @@ it('handles long names, unsupported messages, restart and slot pagination safely
     expect(h.last().body).toBe('Clerk menu');
     await h.click('walk');
     await h.text('Example');
+    await h.click('skip-mobile');
     await h.click('slot:09:00');
     await h.text('x'.repeat(161));
     expect(h.last().body).toContain('at most 160');
@@ -945,6 +953,7 @@ it('rechecks daily capacity on walk-in confirmation without staff override or pa
     await h.text('clerk');
     await h.click('walk');
     await h.text('Synthetic Walk-in');
+    await h.click('skip-mobile');
     await h.click('slot:09:00');
     await h.click('skip');
     await h.service.book({
@@ -976,6 +985,7 @@ it('formats clerk walk-ins, appointment lists/details and block ranges without c
     await h.text('clerk');
     await h.click('walk');
     await h.text('Synthetic Walk-in');
+    await h.click('skip-mobile');
     expect(h.choices()).toContainEqual(
       expect.objectContaining({
         title: '11:40 AM–12:00 PM',
@@ -1008,4 +1018,274 @@ it('formats clerk walk-ins, appointment lists/details and block ranges without c
       startTime: '13:00',
       endTime: '13:20',
     });
+  }));
+
+it('navigates tomorrow and chosen historical dates in clinic-local time without mutations', async () =>
+  setup(async (h) => {
+    // UTC is still September 15, while Asia/Karachi is already September 16.
+    h.advance(-4 * 60 * 60_000);
+    for (const [id, date] of [
+      ['local-today', '2030-09-16'],
+      ['local-tomorrow', '2030-09-17'],
+      ['historical', '2029-02-28'],
+    ] as const)
+      await h.repo.runExclusive(clinic.clinicId, (u) =>
+        u.insert(
+          appointment({
+            appointmentId: id,
+            appointmentDate: date,
+            status: 'Completed',
+          }),
+        ),
+      );
+    const before = h.repo.exportRecords();
+    const projection = h.repo.projectionStatus();
+    await h.text('clerk');
+    await h.click('today');
+    expect(h.choices()[0]!.id).toContain('local-today');
+    await h.text('menu');
+    await h.click('tomorrow');
+    expect(h.last().body).toContain('2030-09-17');
+    expect(h.choices()[0]!.id).toContain('local-tomorrow');
+    await h.click('appointment:local-tomorrow');
+    expect(h.last().body).toContain('2030-09-17 9:00 AM–9:20 AM');
+    await h.click('choose-date');
+    await h.text('2030-02-30');
+    expect(h.last().body).toContain('valid appointment date');
+    await h.text('2029-02-28');
+    expect(h.choices()[0]!.id).toContain('historical');
+    await h.click('appointment:historical');
+    expect(h.last().body).toContain('2029-02-28');
+    await h.click('choose-date');
+    await h.text('2030-10-01');
+    expect(h.last().body).toContain('No appointments for 2030-10-01');
+    expect(h.repo.exportRecords()).toEqual(before);
+    expect(h.repo.projectionStatus()).toEqual(projection);
+  }));
+
+it('searches names and exact normalized existing numbers across dates with paginated results', async () =>
+  setup(async (h) => {
+    for (let i = 0; i < 12; i++)
+      await h.repo.runExclusive(clinic.clinicId, (u) =>
+        u.insert(
+          appointment({
+            appointmentId: `search-${String(i).padStart(2, '0')}`,
+            appointmentDate: i < 10 ? '2030-09-16' : '2030-09-17',
+            patientName: 'Synthetic Search Patient',
+            status: 'Completed',
+            whatsappNumber: '+12025550123',
+          }),
+        ),
+      );
+    const before = h.repo.exportRecords();
+    await h.text('clerk');
+    await h.click('search');
+    await h.text('s');
+    expect(h.last().body).toContain('2–80');
+    await h.text('sYnThEtIc   SEARCH');
+    expect(h.choices()).toHaveLength(10);
+    expect(h.choices()[0]!.description).toContain('2030-09-16');
+    const stale = h.choices().find((c) => c.id.endsWith(':more'))!.id;
+    await h.click('more');
+    expect(h.choices()).toHaveLength(3);
+    expect(h.choices()[1]!.description).toContain('2030-09-17');
+    await h.receive({ type: 'action', value: stale });
+    expect(h.choices()).toHaveLength(3);
+    await h.click('appointment:search-10');
+    expect(h.last().body).toContain('2030-09-17 9:00 AM');
+    await h.click('search');
+    await h.text('+1 (202) 555-0123');
+    expect(h.choices()).toHaveLength(10);
+    expect(JSON.stringify(h.last())).not.toContain('12025550123');
+    await h.text('menu');
+    await h.click('search');
+    await h.text('5550123');
+    expect(h.last().body).toContain('full mobile number');
+    await h.text('+12025550124');
+    expect(h.last().body).toContain('No matching appointments');
+    expect(h.repo.exportRecords()).toEqual(before);
+  }));
+
+it('rechecks clerk authorization before date/search queries and rejects patient use of clerk action IDs', async () =>
+  setup(async (h) => {
+    await h.text('clerk');
+    const search = h.choices().find((c) => c.id.endsWith(':search'))!.id;
+    await h.receive({ type: 'action', value: search }, patient);
+    expect(h.last().body).not.toContain('Enter a patient name');
+    await h.click('book'); // Patient menu cannot turn into a clerk query.
+    await h.text('clerk');
+    await h.click('search');
+    h.setAuth('[]');
+    await h.text('Synthetic');
+    expect(h.last().body).not.toContain('Search results');
+    expect(h.last().body).not.toContain('No matching appointments');
+    h.setAuth(
+      JSON.stringify([
+        {
+          clinicId: 'other_clinic',
+          sender,
+          role: 'Clerk',
+          operatorId: 'other',
+        },
+      ]),
+    );
+    await h.text('clerk');
+    expect(h.choices().some((c) => c.title === 'Search Appointment')).toBe(
+      false,
+    );
+  }));
+
+it('filters foreign-clinic records from search results and their detail selection', async () =>
+  setup(async (h) => {
+    const local = appointment({
+      appointmentId: 'local-search',
+      patientName: 'Synthetic Match',
+      status: 'Completed',
+    });
+    const foreign = appointment({
+      appointmentId: 'foreign-search',
+      clinicId: 'other_clinic',
+      patientName: 'Synthetic Match',
+      status: 'Completed',
+    });
+    await h.repo.runExclusive(clinic.clinicId, (u) => u.insert(local));
+    await h.repo.runExclusive(clinic.clinicId, async (unit) => {
+      const records = {
+        ...h.repo.exportRecords(),
+        appointments: [local, foreign],
+      };
+      const operator = { role: 'Clerk' as const, operatorId: 'demo-clerk' };
+      let seq = 0;
+      const incoming = (value: string, type: 'text' | 'action' = 'text') => ({
+        id: `query-${++seq}`,
+        sender,
+        timestamp: h.clock.now().getTime(),
+        input: { type, value },
+      });
+      let result = await converseClerk(
+        null,
+        incoming('clerk'),
+        records,
+        unit,
+        h.clock,
+        operator,
+      );
+      result = await converseClerk(
+        result.state,
+        incoming(`${result.state.token}:search`, 'action'),
+        records,
+        unit,
+        h.clock,
+        operator,
+      );
+      result = await converseClerk(
+        result.state,
+        incoming('Synthetic Match'),
+        records,
+        unit,
+        h.clock,
+        operator,
+      );
+      expect(JSON.stringify(result.message)).toContain('local-search');
+      expect(JSON.stringify(result.message)).not.toContain('foreign-search');
+      result = await converseClerk(
+        result.state,
+        incoming(`${result.state.token}:appointment:foreign-search`, 'action'),
+        records,
+        unit,
+        h.clock,
+        operator,
+      );
+      expect(JSON.stringify(result.message)).not.toContain('foreign-search');
+      expect(result.state.step).toBe('appointment');
+    });
+  }));
+
+it('normalizes search whitespace before validation and never searches empty queries', async () =>
+  setup(async (h) => {
+    await h.walk();
+    const before = h.repo.exportRecords();
+    await h.text('menu');
+    await h.click('search');
+    for (const query of ['', '    ', '\t\n', '   S    ']) {
+      await h.text(query);
+      expect(h.last().body).toContain('Enter a name of 2–80');
+      expect(h.choices()).toEqual([]);
+    }
+    await h.text(`  Synthetic${' '.repeat(90)}Walk-in  `);
+    expect(h.last().body).toContain('Search results');
+    expect(h.choices()).toHaveLength(1);
+    expect(h.repo.exportRecords()).toEqual(before);
+  }));
+
+it('books supplied Pakistani mobiles canonically and searches either format without merging patients', async () =>
+  setup(async (h) => {
+    for (const [mobile, slot] of [
+      ['03001234567', '09:00'],
+      ['+92 300 1234567', '09:20'],
+    ] as const) {
+      await h.text('clerk');
+      await h.click('walk');
+      await h.text('Synthetic Mobile Patient');
+      await h.text('not a number');
+      expect(h.last().body).toContain('valid mobile number');
+      expect(h.choices()[0]!.title).toBe('Skip');
+      await h.text(mobile);
+      await h.click(`slot:${slot}`);
+      await h.click('skip');
+      await h.click('confirm');
+      expect(h.last().body).toContain('Walk-in booked');
+    }
+    const records = h.repo.exportRecords();
+    expect(records.appointments).toHaveLength(2);
+    expect(records.patients).toHaveLength(2);
+    expect(new Set(records.appointments.map((a) => a.patientId)).size).toBe(2);
+    expect(
+      records.appointments.every(
+        (a) =>
+          a.whatsappNumber === '+923001234567' &&
+          a.source === 'WalkIn' &&
+          a.status === 'Scheduled',
+      ),
+    ).toBe(true);
+    expect(
+      records.patients.every((p) => p.whatsappNumber === '+923001234567'),
+    ).toBe(true);
+    for (const query of ['03001234567', '+923001234567']) {
+      await h.text('menu');
+      await h.click('search');
+      await h.text(query);
+      expect(h.choices()).toHaveLength(2);
+      expect(h.last().body).toContain('Search results');
+    }
+    expect(h.repo.exportRecords()).toEqual(records);
+  }));
+
+it('skips mobile without fake contacts, shares no patient IDs, and safely searches contactless appointments', async () =>
+  setup(async (h) => {
+    for (const slot of ['09:00', '09:20']) {
+      await h.text('clerk');
+      await h.click('walk');
+      await h.text('Synthetic Contactless');
+      await h.click('skip-mobile');
+      await h.click(`slot:${slot}`);
+      await h.click('skip');
+      await h.click('confirm');
+    }
+    const records = h.repo.exportRecords();
+    expect(records.patients).toHaveLength(2);
+    expect(new Set(records.patients.map((p) => p.patientId)).size).toBe(2);
+    expect(records.appointments.every((a) => a.whatsappNumber === '')).toBe(
+      true,
+    );
+    expect(records.patients.every((p) => p.whatsappNumber === '')).toBe(true);
+    await h.text('menu');
+    await h.click('search');
+    await h.text('contactless');
+    expect(h.choices()).toHaveLength(2);
+    await h.text('menu');
+    await h.click('search');
+    await h.text('03001234567');
+    expect(h.last().body).toContain('No matching appointments');
+    expect(h.repo.exportRecords()).toEqual(records);
   }));
