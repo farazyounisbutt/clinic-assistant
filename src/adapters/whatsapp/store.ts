@@ -1,3 +1,5 @@
+import { converseDoctor } from './doctor.js';
+import type { DoctorConversation, DoctorOutcome } from './doctor.js';
 import type { Clock } from '../../ports/runtime.js';
 import type { SqliteClinicRepository } from '../cloudflare/repository.js';
 import { scheduleClinicAlarm } from '../cloudflare/alarms.js';
@@ -139,13 +141,16 @@ export class WhatsAppStore {
             if (incoming.timestamp <= this.clock.now().getTime() - WINDOW_MS)
               return { job, outcome: null };
             const prior = row
-              ? (JSON.parse(row.record) as Conversation | ClerkConversation)
+              ? (JSON.parse(row.record) as
+                  Conversation | ClerkConversation | DoctorConversation)
               : null;
             const operator = this.operators.resolve(
               this.repo.clinicId,
               incoming.sender,
             );
-            const isClerk = prior && 'kind' in prior && prior.kind === 'clerk';
+            const isStaff = prior && 'kind' in prior;
+            const isClerk = isStaff && prior.kind === 'clerk';
+            const isDoctor = isStaff && prior.kind === 'doctor';
             const records = this.repo.exportRecords();
             const outcome =
               operator?.role === 'Clerk'
@@ -157,14 +162,22 @@ export class WhatsAppStore {
                     this.clock,
                     operator,
                   )
-                : await converse(
-                    isClerk ? null : (prior as Conversation | null),
-                    incoming,
-                    records,
-                    unit,
-                    this.clock,
-                  );
-            if (operator?.role === 'Clerk') actorId = operator.operatorId;
+                : operator?.role === 'Doctor'
+                  ? await converseDoctor(
+                      isDoctor ? (prior as DoctorConversation) : null,
+                      incoming,
+                      unit,
+                      this.clock,
+                      operator,
+                    )
+                  : await converse(
+                      isStaff ? null : (prior as Conversation | null),
+                      incoming,
+                      records,
+                      unit,
+                      this.clock,
+                    );
+            if (operator) actorId = operator.operatorId;
             return { job, outcome };
           },
           (result) => {
@@ -190,7 +203,7 @@ export class WhatsAppStore {
   }
   private complete(
     job: InboxRow,
-    outcome: Outcome | ClerkOutcome | null,
+    outcome: Outcome | ClerkOutcome | DoctorOutcome | null,
   ): void {
     if (outcome) {
       const state = outcome.state;
@@ -207,8 +220,11 @@ export class WhatsAppStore {
         state.sender,
         JSON.stringify({
           ...outcome.message,
-          ...('kind' in state && state.kind === 'clerk'
-            ? { operatorId: state.operatorId }
+          ...('kind' in state
+            ? {
+                operatorId: state.operatorId,
+                operatorRole: state.kind === 'doctor' ? 'Doctor' : 'Clerk',
+              }
             : {}),
         }),
         this.clock.now().getTime(),
@@ -271,6 +287,7 @@ export class WhatsAppStore {
           try {
             const payload = JSON.parse(job.payload) as Message & {
               operatorId?: string;
+              operatorRole?: 'Clerk' | 'Doctor';
             };
             if (payload.operatorId) {
               const operator = this.operators.resolve(
@@ -278,7 +295,7 @@ export class WhatsAppStore {
                 job.recipient,
               );
               if (
-                operator?.role !== 'Clerk' ||
+                operator?.role !== (payload.operatorRole ?? 'Clerk') ||
                 operator.operatorId !== payload.operatorId
               )
                 throw new MetaFailure('Configuration');

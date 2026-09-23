@@ -3,7 +3,7 @@
 Clerks share the clinic's existing WhatsApp business number. The authenticated
 webhook still selects the clinic from its receiving Phone Number ID; no sender or
 command can choose a different clinic. No LLM or new Meta configuration is needed.
-Doctor reporting is not implemented.
+Read-only Doctor reporting is documented in [Doctor’s View](doctor-whatsapp.md).
 
 ## Authorization
 
@@ -20,7 +20,7 @@ configuration grants no privileges. The adapter limits the list to 1,000 entries
 A sender may hold a different role in each clinic. Clinic A authorization never
 grants access in Clinic B. Commands do not establish authorization, and responses
 to unauthorized staff-like commands remain ordinary patient responses without
-revealing staff membership. Doctor-only identities have no staff operations yet.
+revealing staff membership. Doctor-only identities receive the separate read-only Doctor menu, never Clerk operations.
 
 Authorization is resolved for every processed message, including recovered work.
 The session records its clerk mode and operator ID. A role/operator change discards
