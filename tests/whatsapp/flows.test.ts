@@ -246,7 +246,7 @@ describe('durable patient conversations', () => {
       });
       await h.click('confirm');
       expect(h.body()).toContain('no longer available');
-      expect(h.choices().some((c) => c.title === '09:00')).toBe(false);
+      expect(h.choices().some((c) => c.title === '9:00 AM')).toBe(false);
       expect(h.repo.exportRecords().appointments).toHaveLength(1);
       await h.click('slot:09:20');
       await h.click('skip');
@@ -446,7 +446,7 @@ describe('durable patient conversations', () => {
       await h.click('date:2030-09-16');
       expect(h.choices()).toHaveLength(10);
       await h.click('more');
-      expect(h.choices()[0]!.title).toBe('12:00');
+      expect(h.choices()[0]!.title).toBe('12:00 PM');
       await h.click('slot:12:00');
       await h.text('Synthetic');
       await h.click('skip');
@@ -1015,8 +1015,66 @@ it('completes a same-day WhatsApp reschedule when the original occupies the fina
     expect(h.body()).toContain(
       `Appointment confirmed.\nReference: ${replacement.appointmentId}`,
     );
-    expect(h.body()).toContain('2030-09-16 at 09:20');
+    expect(h.body()).toContain('2030-09-16 at 9:20 AM');
     expect(await h.service.availability(clinic.clinicId, '2030-09-16')).toEqual(
       [],
     );
+  }));
+
+it('formats patient slots, booking, lookup, reschedule and cancellation in clinic-local AM/PM', async () =>
+  setup(async (h) => {
+    await h.repo.configure(
+      {
+        clinic: { ...clinic, timezone: 'Asia/Tokyo' },
+        workingHours: [{ ...hours, startTime: '12:00', endTime: '15:00' }],
+        blockedSlots: [],
+      },
+      'test',
+    );
+    await h.text('hi');
+    await h.click('book');
+    expect(h.body()).toContain('Asia/Tokyo');
+    await h.click('date:2030-09-16');
+    expect(h.choices()).toContainEqual(
+      expect.objectContaining({
+        title: '1:00 PM',
+        id: expect.stringContaining(':slot:13:00'),
+      }),
+    );
+    expect(h.body()).toContain('Asia/Tokyo');
+    await h.click('slot:13:00');
+    await h.text('Synthetic Patient');
+    await h.click('skip');
+    expect(h.body()).toContain('2030-09-16 at 1:00 PM (Asia/Tokyo)');
+    await h.click('confirm');
+    expect(h.body()).toContain('1:00 PM (Asia/Tokyo)');
+    const original = h.repo.exportRecords().appointments[0]!;
+    expect(original).toMatchObject({ startTime: '13:00', endTime: '13:20' });
+    await h.click('lookup');
+    expect(h.choices()[0]!.title).toBe('2030-09-16 1:00 PM');
+    await h.click(`appointment:${original.appointmentId}`);
+    expect(h.body()).toContain('1:00 PM (Asia/Tokyo)');
+    await h.manage(original.appointmentId);
+    await h.click('reschedule');
+    await h.click('date:2030-09-16');
+    await h.click('slot:14:00');
+    expect(h.body()).toContain('Confirm reschedule');
+    expect(h.body()).toContain('2:00 PM (Asia/Tokyo)');
+    await h.click('confirm');
+    expect(h.body()).toContain('2:00 PM (Asia/Tokyo)');
+    const replacement = h.repo
+      .exportRecords()
+      .appointments.find((a) => a.status === 'Scheduled')!;
+    expect(replacement).toMatchObject({ startTime: '14:00', endTime: '14:20' });
+    await h.manage(replacement.appointmentId);
+    await h.click('cancel');
+    expect(h.body()).toContain('2:00 PM (Asia/Tokyo)');
+    await h.click('confirm-cancel');
+    expect(
+      h.repo
+        .exportRecords()
+        .appointments.find(
+          (a) => a.appointmentId === replacement.appointmentId,
+        ),
+    ).toMatchObject({ status: 'Cancelled', startTime: '14:00' });
   }));

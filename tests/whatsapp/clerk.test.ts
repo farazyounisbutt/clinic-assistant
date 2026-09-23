@@ -279,7 +279,7 @@ it('shows clinic-local today chronologically with status, safe pagination and no
     await h.click('today');
     expect(h.last().body).toContain('2030-09-16');
     expect(h.choices()).toHaveLength(10);
-    expect(h.choices()[0]!.title).toContain('09:00');
+    expect(h.choices()[0]!.title).toContain('9:00 AM');
     expect(h.choices()[0]!.description).toContain('Cancelled');
     expect(h.choices()[1]!.description).toContain('Rescheduled');
     expect(JSON.stringify(h.last())).not.toContain('+1202555');
@@ -961,4 +961,51 @@ it('rechecks daily capacity on walk-in confirmation without staff override or pa
     await h.click('confirm');
     expect(h.last().body).toContain('fully booked');
     expect(h.repo.exportRecords()).toEqual(before);
+  }));
+
+it('formats clerk walk-ins, appointment lists/details and block ranges without changing stored times', async () =>
+  setup(async (h) => {
+    await h.repo.configure(
+      {
+        clinic,
+        workingHours: [{ ...hours, startTime: '11:40', endTime: '14:00' }],
+        blockedSlots: [],
+      },
+      'test',
+    );
+    await h.text('clerk');
+    await h.click('walk');
+    await h.text('Synthetic Walk-in');
+    expect(h.choices()).toContainEqual(
+      expect.objectContaining({
+        title: '11:40 AM–12:00 PM',
+        id: expect.stringContaining(':slot:11:40'),
+      }),
+    );
+    await h.click('slot:12:00');
+    await h.click('skip');
+    expect(h.last().body).toContain('2030-09-16 12:00 PM');
+    await h.click('confirm');
+    expect(h.last().body).toContain(
+      'Walk-in booked: 12:00 PM–12:20 PM (Asia/Karachi)',
+    );
+    const a = h.repo.exportRecords().appointments[0]!;
+    expect(a).toMatchObject({ startTime: '12:00', endTime: '12:20' });
+    await h.text('menu');
+    await h.click('today');
+    expect(h.choices()[0]!.title).toContain('12:00 PM');
+    await h.click(`appointment:${a.appointmentId}`);
+    expect(h.last().body).toContain('12:00 PM–12:20 PM (Asia/Karachi)');
+    await h.click('block');
+    await h.text('2030-09-16');
+    await h.text('13:00');
+    await h.text('13:20');
+    await h.click('skip');
+    expect(h.last().body).toContain('2030-09-16 1:00 PM–1:20 PM');
+    await h.click('confirm');
+    expect(h.last().body).toContain('Time blocked.');
+    expect(h.repo.exportRecords().blockedSlots[0]).toMatchObject({
+      startTime: '13:00',
+      endTime: '13:20',
+    });
   }));

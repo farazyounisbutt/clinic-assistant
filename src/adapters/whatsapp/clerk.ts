@@ -1,3 +1,7 @@
+import {
+  formatClinicTime,
+  formatClinicTimeRange,
+} from '../../presentation/time.js';
 import type { ClinicOperator } from '../../ports/operators.js';
 import type { ClinicAppointmentUnitOfWork } from '../../ports/repositories.js';
 import type { ClinicRecords } from '../../ports/projection.js';
@@ -189,7 +193,7 @@ export async function converseClerk(
       `Today (${today}) — ${clinic.timezone}`,
       rows.map((a) => ({
         id: `appointment:${a.appointmentId}`,
-        title: `${a.startTime} ${a.patientName}`.slice(0, 24),
+        title: `${formatClinicTime(a.startTime)} ${a.patientName}`.slice(0, 24),
         description:
           `${statusLabel(a)} · ${a.source} · ${a.appointmentId.slice(0, 8)}`.slice(
             0,
@@ -210,7 +214,7 @@ export async function converseClerk(
       `${prefix}${prefix ? '\n' : ''}Choose a time for today (${clinic.timezone}).`,
       rows.map((s) => ({
         id: `slot:${s.startTime}`,
-        title: `${s.startTime}–${s.endTime}`,
+        title: `${formatClinicTimeRange(s.startTime, s.endTime)}`,
       })),
     );
   };
@@ -269,7 +273,7 @@ export async function converseClerk(
       if (!a) throw new DomainError('AppointmentNotFound');
       state.appointmentId = a.appointmentId;
       state.date = today;
-      const summary = `${a.startTime}–${a.endTime}\n${a.patientName.slice(0, 80)}\nReference: ${a.appointmentId}\n${statusLabel(a)} · ${a.source}`;
+      const summary = `${formatClinicTimeRange(a.startTime, a.endTime)} (${clinic.timezone})\n${a.patientName.slice(0, 80)}\nReference: ${a.appointmentId}\n${statusLabel(a)} · ${a.source}`;
       if (state.operation === 'today') menu(summary);
       else
         confirm(
@@ -323,7 +327,7 @@ export async function converseClerk(
       } else {
         state.note = action === 'skip' ? null : text;
         confirm(
-          `${state.operation === 'walk' ? 'Add walk-in' : 'Block time'}?\n${state.date} ${state.slot}${state.end ? `–${state.end}` : ''}\n${clinic.timezone}${state.name ? `\n${state.name}` : ''}${state.note ? `\n${state.note}` : ''}`,
+          `${state.operation === 'walk' ? 'Add walk-in' : 'Block time'}?\n${state.date} ${state.end ? formatClinicTimeRange(state.slot!, state.end) : formatClinicTime(state.slot!)}\n${clinic.timezone}${state.name ? `\n${state.name}` : ''}${state.note ? `\n${state.note}` : ''}`,
         );
       }
     } else if (state.step === 'after-walk' && action === 'check-now') {
@@ -348,7 +352,7 @@ export async function converseClerk(
         state.appointmentId = a.appointmentId;
         state.step = 'after-walk';
         show(
-          `Walk-in booked: ${a.startTime}–${a.endTime}\nReference: ${a.appointmentId}`,
+          `Walk-in booked: ${formatClinicTimeRange(a.startTime, a.endTime)} (${clinic.timezone})\nReference: ${a.appointmentId}`,
           [
             { id: 'check-now', title: 'Check In Now' },
             { id: 'abort', title: 'Back to menu' },

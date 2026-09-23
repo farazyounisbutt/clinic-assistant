@@ -1,3 +1,4 @@
+import { formatClinicTime } from '../../presentation/time.js';
 import { dailyCapacity } from '../../scheduling/capacity.js';
 import { AppointmentService } from '../../appointments/service.js';
 import type { Appointment } from '../../appointments/models.js';
@@ -216,11 +217,14 @@ export async function converse(
     if (state.offset >= all.length) state.offset = 0;
     const choices: Choice[] = all
       .slice(state.offset, state.offset + 9)
-      .map((s) => ({ id: `slot:${s.startTime}`, title: s.startTime }));
+      .map((s) => ({
+        id: `slot:${s.startTime}`,
+        title: formatClinicTime(s.startTime),
+      }));
     if (state.offset + 9 < all.length)
       choices.push({ id: 'more', title: 'More times' });
     show(
-      `${prefix}${prefix ? '\n' : ''}Choose a time for ${state.date}. Times are confirmed only when you finish.`,
+      `${prefix}${prefix ? '\n' : ''}Choose a time for ${state.date} (${clinic!.timezone}). Times are confirmed only when you finish.`,
       choices,
       'list',
     );
@@ -235,7 +239,7 @@ export async function converse(
   function confirm() {
     state.step = 'confirm';
     show(
-      `${state.workflow === 'reschedule' ? 'Confirm reschedule' : 'Confirm appointment'}\n${clinic!.doctorName.slice(0, 160)}\n${state.date} at ${state.slot} (${clinic!.timezone})\nName: ${state.name}${state.reason ? `\nNote: ${state.reason}` : ''}`,
+      `${state.workflow === 'reschedule' ? 'Confirm reschedule' : 'Confirm appointment'}\n${clinic!.doctorName.slice(0, 160)}\n${state.date} at ${formatClinicTime(state.slot!)} (${clinic!.timezone})\nName: ${state.name}${state.reason ? `\nNote: ${state.reason}` : ''}`,
       [
         { id: 'confirm', title: 'Confirm' },
         { id: 'change', title: 'Change' },
@@ -252,12 +256,16 @@ export async function converse(
       .slice(state.offset, state.offset + 9)
       .map((a) => ({
         id: `appointment:${a.appointmentId}`,
-        title: `${a.appointmentDate} ${a.startTime}`,
+        title: `${a.appointmentDate} ${formatClinicTime(a.startTime)}`,
         description: a.status,
       }));
     if (state.offset + 9 < all.length)
       choices.push({ id: 'more', title: 'More appointments' });
-    show('Choose one of your upcoming appointments.', choices, 'list');
+    show(
+      `Choose one of your upcoming appointments (${clinic!.timezone}).`,
+      choices,
+      'list',
+    );
   }
   const text = input.input.type === 'text' ? input.input.value.trim() : '';
   // Action IDs are bound to one displayed state, not just a workflow step.
@@ -356,7 +364,7 @@ export async function converse(
           ...(state.reason ? { reason: state.reason } : {}),
         });
       menu(
-        `Appointment confirmed.\nReference: ${appointment.appointmentId}\n${appointment.appointmentDate} at ${appointment.startTime}`,
+        `Appointment confirmed.\nReference: ${appointment.appointmentId}\n${appointment.appointmentDate} at ${formatClinicTime(appointment.startTime)} (${clinic!.timezone})`,
       );
     } else if (state.step === 'appointment' && action === 'more') {
       state.offset += 9;
@@ -370,7 +378,7 @@ export async function converse(
       );
       if (!a) throw new DomainError('AppointmentNotFound');
       state.appointmentId = a.appointmentId;
-      const summary = `Reference: ${a.appointmentId}\n${a.appointmentDate} at ${a.startTime}\n${a.status}`;
+      const summary = `Reference: ${a.appointmentId}\n${a.appointmentDate} at ${formatClinicTime(a.startTime)} (${clinic!.timezone})\n${a.status}`;
       if (state.workflow === 'lookup') menu(summary);
       else {
         state.step = 'manage';
@@ -383,10 +391,13 @@ export async function converse(
     } else if (state.step === 'manage' && action === 'cancel') {
       const a = selected();
       state.step = 'cancel';
-      show(`Cancel appointment ${a.appointmentDate} at ${a.startTime}?`, [
-        { id: 'confirm-cancel', title: 'Yes, cancel' },
-        { id: 'abort', title: 'Keep appointment' },
-      ]);
+      show(
+        `Cancel appointment ${a.appointmentDate} at ${formatClinicTime(a.startTime)} (${clinic!.timezone})?`,
+        [
+          { id: 'confirm-cancel', title: 'Yes, cancel' },
+          { id: 'abort', title: 'Keep appointment' },
+        ],
+      );
     } else if (state.step === 'cancel' && action === 'confirm-cancel') {
       const a = selected();
       await service.transition({
